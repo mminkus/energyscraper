@@ -152,28 +152,28 @@ The `AC-coupled solar` line is useful when a separate AC inverter (for example a
 
 ### Example
 
-Early morning and overcast, on a Powerwall 3 with three DC strings plus a separate AC-coupled inverter (serial and DIN are masked in human-readable output):
+Around midday, on a Powerwall 3 with three DC strings plus a separate AC-coupled inverter (serial and DIN are masked in human-readable output):
 
 ```text
 $ energyscraper strings --site <energy_site_id>
 Inverter serial TG000***EST
-  String 1: 65 V, 1.5 A, 97.5 W
-  String 2: 165 V, 1.5 A, 247.5 W
-  String 3: 195 V, 1.6 A, 312 W
+  String 1: 55 V, 8.7 A, 478.5 W
+  String 2: 150 V, 8.8 A, 1327.5 W
+  String 3: 175 V, 11.4 A, 1995 W
   String 4: 0 V, 0 A, 0 W
   String 5: 0 V, 0 A, 0 W
   String 6: 0 V, 0 A, 0 W  [Pv_Active_Parallel]
-  Inverter AC out: -60 W, 246.4 V, 60 Hz
-  DC strings:  657.0 W
-  AC-coupled:  180.1 W
-  --------------------
-  Total solar: 837.1 W
+  Inverter AC out: -30 W, 245.4 V, 60 Hz
+  DC strings:  3801.0 W
+  AC-coupled:  1185.0 W
+  ---------------------
+  Total solar: 4986.0 W
   (host 192.0.2.10, din 17070***EST)
 ```
 
 The totals read as an addition: the DC strings plus the AC-coupled inverter equal the metered solar total.
 
-In this installation the DC strings map to roof faces as String 1 = north, String 2 = west, String 3 = east; strings 4-6 are unused. The south-facing array is on a separate AC-coupled inverter, so it never appears as a DC string - it shows up only in the `AC-coupled solar` figure (about 180 W here), computed as the metered solar total minus the DC string total.
+In this installation the DC strings map to roof faces as String 1 = north, String 2 = west, String 3 = east; strings 4-6 are unused. The south-facing array is on a separate AC-coupled inverter, so it never appears as a DC string - it shows up only in the `AC-coupled solar` figure (about 1185 W here), computed as the metered solar total minus the DC string total. This figure was cross-checked against the AC inverter's own display and matched.
 
 `strings` reports the leader inverter. On multi-inverter sites the additional inverters require a Wi-Fi session to the gateway, the same limitation the cloud diagnostics apps have.
 
