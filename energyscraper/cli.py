@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 import aiohttp
 from tesla_fleet_api import TeslaFleetApi, TeslaFleetOAuth
-from tesla_fleet_api.const import Method, SERVERS, Scope
+from tesla_fleet_api.const import EnergyDeviceIdentifierType, Method, SERVERS, Scope
 from tesla_fleet_api.exceptions import TeslaFleetError
 
 
@@ -54,6 +54,12 @@ STRING_METRIC_TERMS = (
     "solar_inverter_current",
 )
 PV_STRING_NAMES = ("A", "B", "C", "D", "E", "F")
+ENERGY_DEVICE_TARGETS = {
+    EnergyDeviceIdentifierType.GATEWAY_DIN: "Gateway DIN",
+    EnergyDeviceIdentifierType.SITE_UUID: "Site UUID",
+    EnergyDeviceIdentifierType.SOLAR_INVERTER_DIN: "Solar inverter DIN",
+    EnergyDeviceIdentifierType.WALL_CONNECTOR_DIN: "Wall Connector DIN",
+}
 
 
 def default_config_path() -> Path:
@@ -181,6 +187,29 @@ def energy_site_id(product: dict[str, Any]) -> int | None:
         if value is not None:
             return int(value)
     return None
+
+
+def product_components(product: dict[str, Any]) -> dict[str, Any]:
+    components = product.get("components")
+    return components if isinstance(components, dict) else {}
+
+
+def product_name(product: dict[str, Any]) -> str:
+    name = first_present(product, "site_name", "asset_site_name", "name")
+    if name:
+        return str(name)
+    components = product_components(product)
+    if product.get("resource_type") in {"charger", "wall_connector"} or components.get("wall_connectors"):
+        return "Wall Connector"
+    product_id = product.get("id")
+    return f"Energy site {product_id}" if product_id else "Energy site"
+
+
+def mask_vin(vin: Any) -> str:
+    value = str(vin or "")
+    if len(value) < 8:
+        return value or "unknown"
+    return f"{value[:3]}***{value[-4:]}"
 
 
 def vehicle_model(vin: str | None) -> str:
@@ -557,9 +586,13 @@ def print_local_summary(data: dict[str, Any]) -> None:
         print("  No meter data returned.")
 
 
-def print_table(rows: list[dict[str, str]], columns: list[tuple[str, str]]) -> None:
+def print_table(
+    rows: list[dict[str, str]],
+    columns: list[tuple[str, str]],
+    indent: str = "",
+) -> None:
     if not rows:
-        print("No rows.")
+        print(f"{indent}No rows.")
         return
 
     widths = {
@@ -567,10 +600,186 @@ def print_table(rows: list[dict[str, str]], columns: list[tuple[str, str]]) -> N
         for key, title in columns
     }
     header = "  ".join(title.ljust(widths[key]) for key, title in columns)
-    print(header)
-    print("  ".join("-" * widths[key] for key, _ in columns))
+    print(f"{indent}{header}")
+    print(f"{indent}{'  '.join('-' * widths[key] for key, _ in columns)}")
     for row in rows:
-        print("  ".join(row.get(key, "").ljust(widths[key]) for key, _ in columns))
+        print(f"{indent}{'  '.join(row.get(key, '').ljust(widths[key]) for key, _ in columns)}")
+
+
+def enabled_capabilities(product: dict[str, Any]) -> list[str]:
+    components = product_components(product)
+    labels = {
+        "battery": "battery",
+        "solar": "solar",
+        "grid": "grid",
+        "load_meter": "load meter",
+    }
+    capabilities = [label for key, label in labels.items() if components.get(key)]
+    if product.get("charge_on_solar_capable"):
+        capabilities.append("Charge on Solar")
+    return capabilities
+
+
+def gateway_role(product: dict[str, Any], device: dict[str, Any]) -> str:
+    gateway_id = str(product.get("gateway_id") or "")
+    if gateway_id and gateway_id in {
+        str(device.get("din") or ""),
+        str(device.get("serial_number") or ""),
+    }:
+        return "site gateway"
+    return ""
+
+
+def print_products_summary(items: list[dict[str, Any]], probes: list[dict[str, Any]] | None = None) -> None:
+    energy_products = [item for item in items if energy_site_id(item) is not None]
+    vehicles = [item for item in items if item.get("vin")]
+    print(f"Products: {len(items)} total, {len(energy_products)} energy site(s), {len(vehicles)} vehicle(s)")
+
+    if vehicles:
+        print()
+        print("Vehicles")
+        print_table(
+            [
+                {
+                    "name": str(item.get("display_name") or "Unnamed"),
+                    "model": vehicle_model(item.get("vin")),
+                    "state": str(item.get("state") or "unknown"),
+                    "vin": mask_vin(item.get("vin")),
+                }
+                for item in vehicles
+            ],
+            [("name", "Name"), ("model", "Model"), ("state", "State"), ("vin", "VIN")],
+        )
+
+    probes_by_site = {
+        probe["site_id"]: probe
+        for probe in probes or []
+        if probe.get("site_id") is not None
+    }
+    if energy_products:
+        print()
+        print("Energy")
+    for index, product in enumerate(energy_products):
+        if index:
+            print()
+        site_id = energy_site_id(product)
+        components = product_components(product)
+        print(product_name(product))
+        print(f"  Type: {product.get('resource_type') or 'energy'}")
+        print(f"  Site ID: {site_id}")
+        if product.get("id"):
+            print(f"  Site serial: {product['id']}")
+        if product.get("asset_site_id"):
+            print(f"  Asset site UUID: {product['asset_site_id']}")
+        if product.get("gateway_id"):
+            print(f"  Gateway ID: {product['gateway_id']}")
+        if product.get("battery_type"):
+            print(f"  Battery type: {product['battery_type']}")
+        capabilities = enabled_capabilities(product)
+        if capabilities:
+            print(f"  Capabilities: {', '.join(capabilities)}")
+
+        gateways = [device for device in components.get("gateways", []) if isinstance(device, dict)]
+        if gateways:
+            print("  Devices (reported by Tesla under gateways):")
+            print_table(
+                [
+                    {
+                        "serial": str(device.get("serial_number") or serial_from_din(device.get("din")) or "unknown"),
+                        "part": str(device.get("part_number") or "unknown"),
+                        "active": "yes" if device.get("is_active") else "no",
+                        "role": gateway_role(product, device),
+                        "uuid": str(device.get("device_id") or "unknown"),
+                    }
+                    for device in gateways
+                ],
+                [
+                    ("serial", "Serial"),
+                    ("part", "Part number"),
+                    ("active", "Active"),
+                    ("role", "Role"),
+                    ("uuid", "Device UUID"),
+                ],
+                indent="    ",
+            )
+
+        connectors = [device for device in components.get("wall_connectors", []) if isinstance(device, dict)]
+        if connectors:
+            print("  Wall Connectors:")
+            print_table(
+                [
+                    {
+                        "serial": str(device.get("serial_number") or serial_from_din(device.get("din")) or "unknown"),
+                        "part": str(device.get("part_number") or "unknown"),
+                        "active": "yes" if device.get("is_active") else "no",
+                        "uuid": str(device.get("device_id") or "unknown"),
+                    }
+                    for device in connectors
+                ],
+                [
+                    ("serial", "Serial"),
+                    ("part", "Part number"),
+                    ("active", "Active"),
+                    ("uuid", "Device UUID"),
+                ],
+                indent="    ",
+            )
+
+        probe = probes_by_site.get(site_id)
+        if probe:
+            print("  Read-only device probes:")
+            rows = [
+                {
+                    "target": str(result.get("target") or "unknown"),
+                    "result": summarize_system_info_probe(result),
+                }
+                for result in probe.get("targets", [])
+                if isinstance(result, dict)
+            ]
+            print_table(rows, [("target", "Target"), ("result", "Result")], indent="    ")
+
+
+def find_nested_mapping(data: Any, key: str) -> dict[str, Any] | None:
+    if isinstance(data, dict):
+        for current_key, value in data.items():
+            if current_key.lower().replace("_", "") == key.lower().replace("_", "") and isinstance(value, dict):
+                return value
+            found = find_nested_mapping(value, key)
+            if found is not None:
+                return found
+    elif isinstance(data, list):
+        for value in data:
+            found = find_nested_mapping(value, key)
+            if found is not None:
+                return found
+    return None
+
+
+def summarize_system_info_probe(result: dict[str, Any]) -> str:
+    if result.get("error"):
+        return str(result["error"])
+    response = result.get("response")
+    system_info = find_nested_mapping(response, "GetSystemInfoResponse")
+    if system_info:
+        device_id = system_info.get("device_id")
+        if not isinstance(device_id, dict):
+            device_id = {}
+        firmware = system_info.get("firmware_version")
+        if not isinstance(firmware, dict):
+            firmware = {}
+        serial = device_id.get("serial_number") or serial_from_din(system_info.get("din")) or "unknown"
+        part = device_id.get("part_number") or "unknown"
+        version = firmware.get("version")
+        summary = f"{serial}, part {part}"
+        if version:
+            summary += f", firmware {version}"
+        if system_info.get("device_type") is not None:
+            summary += f", device type {system_info['device_type']}"
+        return summary
+    timeout = find_nested_mapping(response, "Timeout")
+    if timeout:
+        return str(timeout.get("description") or "timed out")
+    return "response received (no system info)"
 
 
 class CliError(RuntimeError):
@@ -938,7 +1147,10 @@ def print_energy_summary(sites: list[dict[str, Any]]) -> None:
             if len(metrics) > 12:
                 print(f"    ... {len(metrics) - 12} more")
         else:
-            print("  Inverter/string metrics: not present in these Fleet responses")
+            print(
+                "  Inverter/string metrics: not in Fleet responses; "
+                f"run `energyscraper strings --site {site['site_id']}`"
+            )
 
 
 def print_car_summary(cars: list[dict[str, Any]]) -> None:
@@ -967,17 +1179,67 @@ def print_car_summary(cars: list[dict[str, Any]]) -> None:
     )
 
 
+def product_probe_targets(product: dict[str, Any]) -> list[EnergyDeviceIdentifierType]:
+    components = product_components(product)
+    targets: list[EnergyDeviceIdentifierType] = [EnergyDeviceIdentifierType.SITE_UUID]
+    if product.get("resource_type") == "battery" or components.get("gateways"):
+        targets.insert(0, EnergyDeviceIdentifierType.GATEWAY_DIN)
+    if components.get("solar"):
+        targets.append(EnergyDeviceIdentifierType.SOLAR_INVERTER_DIN)
+    if product.get("resource_type") in {"charger", "wall_connector"} or components.get("wall_connectors"):
+        targets.append(EnergyDeviceIdentifierType.WALL_CONNECTOR_DIN)
+    return targets
+
+
+async def probe_energy_products(api: TeslaFleetApi, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    async def probe_product(product: dict[str, Any]) -> dict[str, Any]:
+        site_id = energy_site_id(product)
+        if site_id is None:
+            return {"site_id": None, "targets": []}
+        site = api.energySites.create(site_id)
+        targets = product_probe_targets(product)
+        calls = [
+            site._command(
+                "common",
+                "get_system_info_request",
+                identifier_type=identifier_type,
+            )
+            for identifier_type in targets
+        ]
+        responses = await asyncio.gather(*calls, return_exceptions=True)
+        results: list[dict[str, Any]] = []
+        for identifier_type, response in zip(targets, responses, strict=True):
+            result: dict[str, Any] = {
+                "identifier_type": int(identifier_type),
+                "target": ENERGY_DEVICE_TARGETS[identifier_type],
+            }
+            if isinstance(response, TeslaFleetError):
+                status = f" ({response.status})" if response.status else ""
+                result["error"] = f"Tesla API{status}: {response.message}"
+            elif isinstance(response, BaseException):
+                result["error"] = str(response)
+            else:
+                result["response"] = response
+            results.append(result)
+        return {"site_id": site_id, "targets": results}
+
+    energy_products = [item for item in items if energy_site_id(item) is not None]
+    return await asyncio.gather(*(probe_product(product) for product in energy_products))
+
+
 async def products_command(args: argparse.Namespace) -> int:
     async with aiohttp.ClientSession() as session:
         api, _, _ = await get_api(session, args)
         products = await api.products()
-    if args.json:
-        print_json(products)
-    else:
         items = product_items(products)
-        energy_count = sum(1 for item in items if energy_site_id(item) is not None)
-        vehicle_count = sum(1 for item in items if item.get("vin"))
-        print(f"Products: {len(items)} total, {energy_count} energy site(s), {vehicle_count} vehicle(s)")
+        probes = await probe_energy_products(api, items) if args.probe_devices else []
+    if args.json:
+        if probes:
+            print_json({"products": products, "device_probes": probes})
+        else:
+            print_json(products)
+    else:
+        print_products_summary(items, probes)
     return 0
 
 
@@ -1070,6 +1332,508 @@ async def device_command(args: argparse.Namespace) -> int:
     else:
         print_json(result)
     return 0
+
+
+def default_rsa_key_path() -> Path:
+    return default_config_path().parent / "tedapi_rsa_private.pem"
+
+
+def load_or_create_rsa_key(path: Path) -> tuple[Any, bytes, bool]:
+    """Return (private_key, public_key_der_pkcs1, created).
+
+    Loads an existing RSA private key from ``path`` or generates a new
+    RSA-4096 key there. The public key is returned in DER PKCS1 form, which
+    is the format the gateway stores and reports for authorized clients.
+    """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    created = False
+    if path.exists():
+        private_key = serialization.load_pem_private_key(path.read_bytes(), password=None)
+    else:
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
+        pem = private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Create with 0o600 at open time so the private key is never briefly
+        # world-readable between write and chmod.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(pem)
+        os.chmod(path, 0o600)
+        created = True
+
+    public_key_der = private_key.public_key().public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.PKCS1,
+    )
+    return private_key, public_key_der, created
+
+
+def _collect_client_states(obj: Any) -> list[tuple[str, int]]:
+    """Recursively pull (public_key, state) pairs from a gateway auth response.
+
+    Tolerates Tesla's mixed PascalCase/snake_case response shapes.
+    """
+    found: list[tuple[str, int]] = []
+    if isinstance(obj, dict):
+        pub = obj.get("public_key", obj.get("PublicKey"))
+        state = obj.get("state", obj.get("State"))
+        if isinstance(pub, str) and state is not None:
+            try:
+                found.append((pub, int(state)))
+            except (TypeError, ValueError):
+                pass
+        for value in obj.values():
+            found.extend(_collect_client_states(value))
+    elif isinstance(obj, list):
+        for value in obj:
+            found.extend(_collect_client_states(value))
+    return found
+
+
+def match_client_state(result: Any, pubkey_b64: str) -> int | None:
+    """Return the authorization state for our public key, or None if absent.
+
+    State values: 1 PENDING, 2 PENDING_VERIFICATION, 3 VERIFIED.
+    """
+    for pub, state in _collect_client_states(result):
+        if pub == pubkey_b64:
+            return state
+    return None
+
+
+def _find_first_key(obj: Any, target: str) -> Any:
+    """Return the first value for ``target`` anywhere in a nested response."""
+    if isinstance(obj, dict):
+        if target in obj:
+            return obj[target]
+        for value in obj.values():
+            found = _find_first_key(value, target)
+            if found is not None:
+                return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = _find_first_key(value, target)
+            if found is not None:
+                return found
+    return None
+
+
+def _int_to_ipv4(value: Any) -> str | None:
+    try:
+        packed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if packed <= 0:
+        return None
+    return ".".join(str((packed >> shift) & 0xFF) for shift in (24, 16, 8, 0))
+
+
+def discover_gateway_ip(networking_status: Any) -> str | None:
+    """Pick a reachable gateway IPv4 from a get_networking_status response.
+
+    Prefers an interface with an active route; falls back to any interface
+    carrying a non-zero address.
+    """
+    candidates: list[tuple[bool, Any]] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            cfg = node.get("ipv4_config")
+            if isinstance(cfg, dict) and cfg.get("address"):
+                candidates.append((bool(node.get("active_route")), cfg["address"]))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(networking_status)
+    candidates.sort(key=lambda item: not item[0])  # active routes first
+    for _active, address in candidates:
+        ip = _int_to_ipv4(address)
+        if ip and not ip.startswith("0."):
+            return ip
+    return None
+
+
+def _build_cloud_v1r_transport(
+    rsa_key_path: str,
+    timeout: int,
+    fleet_base: str,
+    token: str,
+    site_id: int,
+) -> Any:
+    """A v1r transport that delivers the RSA-signed RoutableMessage over the
+    Tesla cloud (Hermes) via the Fleet ``device_command`` endpoint instead of
+    the local ``/tedapi/v1r`` HTTPS path. This is how the cloud diagnostics
+    apps read string data remotely: same signature, same key, cloud relay.
+    """
+    import math
+    import uuid
+
+    import requests
+    from pypowerwall.tedapi import tedapi_v1r as _v1r_mod
+
+    # Reuse whatever protobuf module the installed transport already binds,
+    # so the RoutableMessage type matches across pypowerwall versions.
+    TEDAPIv1r = _v1r_mod.TEDAPIv1r
+    combined_pb2 = _v1r_mod.combined_pb2
+
+    class _CloudV1r(TEDAPIv1r):
+        def login(self) -> bool:  # never needed: the RSA signature is the credential
+            return True
+
+        def get_din(self):  # DIN comes from the Fleet API, not /tedapi/din
+            return None
+
+        def post_v1r(self, envelope_bytes: bytes, din: str):
+            routable = combined_pb2.RoutableMessage()
+            routable.to_destination.domain = combined_pb2.DOMAIN_ENERGY_DEVICE
+            # Cloud/Hermes needs an explicit routing target (the gateway DIN);
+            # the local transport omits this because the gateway is the direct peer.
+            try:
+                routable.to_destination.routing_address = din.encode()
+            except Exception:  # noqa: BLE001
+                pass
+            routable.protobuf_message_as_bytes = envelope_bytes
+            routable.uuid = str(uuid.uuid4()).encode()
+
+            expires_at = math.ceil(time.time()) + 12
+            tlv_payload = self._build_tlv_payload(din, expires_at, routable.protobuf_message_as_bytes)
+            signature = self._sign(tlv_payload)
+            routable.signature_data.signer_identity.public_key = self._public_key_der
+            routable.signature_data.rsa_data.expires_at = expires_at
+            routable.signature_data.rsa_data.signature = signature
+
+            payload_b64 = base64.b64encode(routable.SerializeToString()).decode("ascii")
+            url = f"{fleet_base}/api/1/energy_sites/{site_id}/device_command"
+            try:
+                resp = requests.post(
+                    url,
+                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                    json={"data": payload_b64},
+                    timeout=timeout,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"[cloud] device_command request error: {exc}", file=sys.stderr)
+                return None
+
+            if resp.status_code != 200:
+                print(f"[cloud] device_command HTTP {resp.status_code}: {resp.text[:400]}", file=sys.stderr)
+                return None
+
+            try:
+                data = resp.json()
+            except ValueError:
+                print(f"[cloud] non-JSON response: {resp.text[:400]}", file=sys.stderr)
+                return None
+
+            reply_b64 = data.get("response") if isinstance(data, dict) else None
+            if not isinstance(reply_b64, str):
+                print(f"[cloud] unexpected device_command response shape: {json.dumps(data)[:400]}", file=sys.stderr)
+                return None
+
+            try:
+                reply = combined_pb2.RoutableMessage()
+                reply.ParseFromString(base64.b64decode(reply_b64))
+            except Exception as exc:  # noqa: BLE001
+                print(f"[cloud] could not decode reply RoutableMessage: {exc}", file=sys.stderr)
+                return None
+
+            fault = reply.signed_message_status.message_fault
+            if fault != combined_pb2.MESSAGEFAULT_ERROR_NONE:
+                name = combined_pb2.MessageFault_E.Name(fault)
+                print(f"[cloud] gateway fault: {name}", file=sys.stderr)
+                return None
+
+            inner = reply.protobuf_message_as_bytes
+            if inner and b"authorization not verified" in inner.lower():
+                print("[cloud] RSA key registered but not VERIFIED by the gateway.", file=sys.stderr)
+                return None
+            return inner or None
+
+    return _CloudV1r(host="cloud", password="unused", rsa_key_path=rsa_key_path, timeout=timeout)
+
+
+def fetch_pw3_vitals(
+    host: str,
+    din: str,
+    rsa_key_path: str,
+    timeout: int,
+    via: str = "local",
+    fleet_base: str | None = None,
+    token: str | None = None,
+    site_id: int | None = None,
+) -> dict[str, Any] | None:
+    """Read Powerwall 3 string vitals over the RSA-signed v1r channel.
+
+    Authenticated purely by the registered RSA key; the DIN is supplied from
+    the Fleet API so no gateway password / TEDAPI login is required. ``via``
+    selects the transport: ``local`` POSTs to the gateway over the LAN,
+    ``cloud`` relays the same signed message through the Fleet API. Returns
+    the leader inverter's data (followers need a WiFi session, same limit as
+    the cloud diagnostics apps).
+    """
+    try:
+        from pypowerwall.tedapi import TEDAPI
+    except ImportError as exc:
+        raise CliError("Install local Powerwall support with `pip install -e '.[local]'`.") from exc
+
+    import logging
+
+    # The v1r constructor runs a connect() that tries a password login we do
+    # not use; silence its expected failure noise, then drive the signed path.
+    pw_logger = logging.getLogger("pypowerwall")
+    previous = pw_logger.level
+    pw_logger.setLevel(logging.CRITICAL)
+    try:
+        tedapi = TEDAPI(
+            host=host,
+            v1r=True,
+            password="unused",
+            rsa_key_path=rsa_key_path,
+            timeout=timeout,
+        )
+        if via == "cloud":
+            if not (fleet_base and token and site_id):
+                raise CliError("Cloud transport needs Fleet base URL, token, and site ID.")
+            tedapi.v1r_transport = _build_cloud_v1r_transport(
+                rsa_key_path, timeout, fleet_base, token, site_id
+            )
+        tedapi.din = din  # pre-seed so the password-gated connect()/login() is skipped
+    finally:
+        pw_logger.setLevel(previous)
+
+    return tedapi.get_pw3_vitals(force=True)
+
+
+def _fmt_num(value: Any) -> str:
+    """Round floats to one decimal for display; leave non-numbers untouched."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return str(value)
+    return f"{round(value, 1):g}"
+
+
+def print_pw3_strings(
+    vitals: dict[str, Any] | None,
+    din: str,
+    host: str,
+    solar_meter_w: float | None = None,
+) -> None:
+    if not vitals:
+        print("No inverter/string data returned.")
+        return
+    inverters = {key: block for key, block in vitals.items() if key.startswith("PVAC--")}
+    if not inverters:
+        print("No inverter (PVAC) data in the vitals payload.")
+        return
+
+    # Per-string connected flags come from the PVS block(s).
+    connected: dict[str, bool] = {}
+    for key, block in vitals.items():
+        if key.startswith("PVS--"):
+            for letter in PV_STRING_NAMES:
+                value = block.get(f"PVS_String{letter}_Connected")
+                if value is not None:
+                    connected[letter] = bool(value)
+
+    string_total = 0.0
+    for key, block in inverters.items():
+        serial = block.get("serialNumber") or key.split("--")[-1]
+        print(f"Inverter serial {mask_serial(serial)}")
+        for index, letter in enumerate(PV_STRING_NAMES, start=1):
+            voltage = block.get(f"PVAC_PVMeasuredVoltage_{letter}")
+            current = block.get(f"PVAC_PVCurrent_{letter}")
+            power = block.get(f"PVAC_PVMeasuredPower_{letter}")
+            state = block.get(f"PVAC_PvState_{letter}")
+            if voltage is None and current is None and power is None:
+                continue
+            annotations = []
+            if state and state != "Pv_Active":
+                annotations.append(state)
+            if connected.get(letter) is False:
+                annotations.append("disconnected")
+            note = f"  [{', '.join(annotations)}]" if annotations else ""
+            print(f"  String {index}: {_fmt_num(voltage)} V, {_fmt_num(current)} A, {_fmt_num(power)} W{note}")
+            if isinstance(power, (int, float)):
+                string_total += power
+        pout = block.get("PVAC_Pout")
+        vout = block.get("PVAC_Vout")
+        fout = block.get("PVAC_Fout")
+        if pout is not None:
+            print(f"  Inverter AC out: {_fmt_num(pout)} W, {_fmt_num(vout)} V, {_fmt_num(fout)} Hz")
+
+    print(f"  String total (DC): {_fmt_num(string_total)} W")
+    if isinstance(solar_meter_w, (int, float)):
+        ac_coupled = solar_meter_w - string_total
+        print(f"  Total solar (meter): {_fmt_num(solar_meter_w)} W")
+        print(f"  AC-coupled solar (meter - strings): {_fmt_num(ac_coupled)} W")
+    print(f"  (host {host}, din {mask_serial(din)})")
+
+
+async def strings_command(args: argparse.Namespace) -> int:
+    key_path = Path(args.rsa_key_path).expanduser() if args.rsa_key_path else default_rsa_key_path()
+    if not key_path.exists():
+        raise CliError(f"No RSA key at {key_path}. Run `energyscraper pair --site {args.site}` first.")
+
+    fleet_base = None
+    token = None
+    async with aiohttp.ClientSession() as session:
+        api, _, _ = await get_api(session, args)
+        site = api.energySites.create(args.site)
+        info = await site.get_system_info()
+        din = _find_first_key(info, "din")
+        try:
+            live = await site.live_status()
+            solar_meter_w = _find_first_key(live, "solar_power")
+        except TeslaFleetError:
+            solar_meter_w = None
+        host = args.host or os.environ.get("PW_HOST")
+        if args.via == "local" and not host:
+            net = await site.get_networking_status()
+            host = discover_gateway_ip(net)
+        if args.via == "cloud":
+            fleet_base = api.server
+            token = api._access_token  # pyright: ignore[reportPrivateUsage]
+
+    if not din:
+        raise CliError("Could not determine the gateway DIN from Fleet API.")
+    if args.via == "local" and not host:
+        raise CliError("Could not determine the gateway IP; pass --host.")
+    if args.via == "cloud" and not (fleet_base and token):
+        raise CliError("Could not resolve the Fleet API base URL or access token for cloud mode.")
+
+    vitals = fetch_pw3_vitals(
+        host or "cloud",
+        din,
+        str(key_path),
+        args.timeout,
+        via=args.via,
+        fleet_base=fleet_base,
+        token=token,
+        site_id=args.site,
+    )
+    if args.json:
+        print_json({"solar_power_meter_w": solar_meter_w, "vitals": vitals or {}})
+    else:
+        print_pw3_strings(vitals, din, host, solar_meter_w)
+    return 0 if vitals else 1
+
+
+async def pair_command(args: argparse.Namespace) -> int:
+    key_path = Path(args.rsa_key_path).expanduser() if args.rsa_key_path else default_rsa_key_path()
+    private_key, public_key_der, created = load_or_create_rsa_key(key_path)
+    del private_key  # only the on-disk private key is needed later, by pypowerwall
+    pubkey_b64 = base64.b64encode(public_key_der).decode("ascii")
+
+    print(f"RSA key: {key_path}" + ("  (generated)" if created else "  (reused)"))
+
+    async with aiohttp.ClientSession() as session:
+        api, _, _ = await get_api(session, args)
+        site = api.energySites.create(args.site)
+
+        existing = await site.list_authorized_clients()
+        state = match_client_state(existing, pubkey_b64)
+        if state == 3:
+            print(f"This key is already registered and VERIFIED on site {args.site}.")
+            print("Ready for local v1r use with:")
+            print(f"  energyscraper local --host <gateway-ip> --rsa-key-path {key_path}")
+            return 0
+        if state is not None:
+            print(f"This key is already registered (state {state}); continuing to verification.")
+        elif not args.yes:
+            print()
+            print("This will WRITE a new authorized client (RSA public key) to your gateway.")
+            print(f"  Site:        {args.site}")
+            print(f"  Description: {args.description}")
+            reply = input("Proceed with the gateway write? [y/N]: ").strip().lower()
+            if reply not in ("y", "yes"):
+                print("Aborted. No write sent.")
+                return 1
+
+        if state is None:
+            result = await site.add_authorized_client(public_key_der, description=args.description)
+            state = match_client_state(result, pubkey_b64)
+            if state == 3:
+                print("Key registered and auto-verified via cloud. No breaker toggle needed.")
+
+        if state != 3:
+            print("Polling for verification (cloud may auto-verify)...")
+            for attempt in range(args.poll_attempts):
+                await asyncio.sleep(args.poll_delay)
+                listing = await site.list_authorized_clients()
+                state = match_client_state(listing, pubkey_b64)
+                print(f"  attempt {attempt + 1}/{args.poll_attempts}: state {state}")
+                if state == 3:
+                    break
+
+    if state == 3:
+        print()
+        print("VERIFIED. Key is now authorized on the gateway.")
+        print("Next, read strings locally over your LAN:")
+        print(f"  energyscraper local --host <gateway-ip> --rsa-key-path {key_path}")
+        return 0
+
+    print()
+    print(f"Key registered but not yet VERIFIED (state {state}).")
+    print("If the cloud did not auto-verify, toggle any Powerwall breaker OFF then")
+    print("ON within 30 seconds, then re-run `energyscraper pair` to confirm.")
+    return 1
+
+
+async def unpair_command(args: argparse.Namespace) -> int:
+    if args.public_key:
+        pubkey_b64 = args.public_key
+        source = "from --public-key"
+    else:
+        key_path = Path(args.rsa_key_path).expanduser() if args.rsa_key_path else default_rsa_key_path()
+        if not key_path.exists():
+            raise CliError(f"No RSA key at {key_path}. Pass --public-key to remove another client.")
+        _, public_key_der, _ = load_or_create_rsa_key(key_path)
+        pubkey_b64 = base64.b64encode(public_key_der).decode("ascii")
+        source = f"from {key_path}"
+
+    async with aiohttp.ClientSession() as session:
+        api, _, _ = await get_api(session, args)
+        site = api.energySites.create(args.site)
+
+        listing = await site.list_authorized_clients()
+        state = match_client_state(listing, pubkey_b64)
+        if state is None:
+            print(f"Key ({source}) is not registered on site {args.site}. Nothing to remove.")
+            return 0
+        print(f"Key ({source}) is registered with state {state}.")
+
+        if not args.yes:
+            print()
+            print("This will WRITE to your gateway: remove this authorized client key.")
+            reply = input("Proceed with the removal? [y/N]: ").strip().lower()
+            if reply not in ("y", "yes"):
+                print("Aborted. No write sent.")
+                return 1
+
+        await site._command(
+            "authorization",
+            "remove_authorized_client_request",
+            {"key_type": 1, "public_key": pubkey_b64},
+        )
+
+        listing = await site.list_authorized_clients()
+        state = match_client_state(listing, pubkey_b64)
+
+    if state is None:
+        print("Removed. The key is no longer in the gateway's authorized client list.")
+        return 0
+    print(f"Removal sent, but the key still shows state {state}. Re-run to retry, or")
+    print("check the raw response with `energyscraper device-command --category")
+    print("authorization --command list_authorized_clients_request --json`.")
+    return 1
 
 
 async def local_command(args: argparse.Namespace) -> int:
@@ -1173,6 +1937,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     products_parser = subparsers.add_parser("products", help="Show Tesla products attached to the account.")
     add_common_args(products_parser)
+    products_parser.add_argument(
+        "--probe-devices",
+        action="store_true",
+        help="Run read-only system-info probes for the site's known Fleet device target types.",
+    )
     products_parser.add_argument("--json", action="store_true", help="Print raw JSON.")
     products_parser.set_defaults(func=products_command)
 
@@ -1203,9 +1972,43 @@ def build_parser() -> argparse.ArgumentParser:
     raw_parser.add_argument("--category", required=True, help="Command category, for example common, teg, or energysitenet.")
     raw_parser.add_argument("--command", required=True, help="Command name, for example get_system_info_request.")
     raw_parser.add_argument("--params", help="JSON object for command params.")
-    raw_parser.add_argument("--identifier-type", type=int, default=1, help="Gateway identifier type. Default: 1 (gateway DIN).")
+    raw_parser.add_argument(
+        "--identifier-type",
+        type=int,
+        choices=[int(value) for value in ENERGY_DEVICE_TARGETS],
+        default=int(EnergyDeviceIdentifierType.GATEWAY_DIN),
+        help="Target type: 1 gateway DIN, 2 site UUID, 3 solar inverter DIN, 4 Wall Connector DIN.",
+    )
     raw_parser.add_argument("--json", action="store_true", help="Print raw JSON.")
     raw_parser.set_defaults(func=device_command)
+
+    pair_parser = subparsers.add_parser("pair", help="Register an RSA key with the gateway for local v1r (Powerwall 3) access.")
+    add_common_args(pair_parser)
+    pair_parser.add_argument("--site", type=int, required=True, help="Energy site ID.")
+    pair_parser.add_argument("--rsa-key-path", help="RSA private key path. Defaults to the config dir's tedapi_rsa_private.pem.")
+    pair_parser.add_argument("--description", default="energyscraper LAN client", help="Human-readable client description stored on the gateway.")
+    pair_parser.add_argument("--poll-attempts", type=int, default=6, help="Verification poll attempts after registration.")
+    pair_parser.add_argument("--poll-delay", type=float, default=5.0, help="Seconds between verification polls.")
+    pair_parser.add_argument("--yes", action="store_true", help="Skip the interactive confirmation before writing to the gateway.")
+    pair_parser.set_defaults(func=pair_command)
+
+    unpair_parser = subparsers.add_parser("unpair", help="Remove a previously paired RSA key from the gateway.")
+    add_common_args(unpair_parser)
+    unpair_parser.add_argument("--site", type=int, required=True, help="Energy site ID.")
+    unpair_parser.add_argument("--rsa-key-path", help="RSA private key path. Defaults to the config dir's tedapi_rsa_private.pem.")
+    unpair_parser.add_argument("--public-key", help="Base64 DER PKCS1 public key to remove instead of the local key file's.")
+    unpair_parser.add_argument("--yes", action="store_true", help="Skip the interactive confirmation before writing to the gateway.")
+    unpair_parser.set_defaults(func=unpair_command)
+
+    strings_parser = subparsers.add_parser("strings", help="Read Powerwall 3 PV string vitals over the RSA-signed local v1r channel (no gateway password).")
+    add_common_args(strings_parser)
+    strings_parser.add_argument("--site", type=int, required=True, help="Energy site ID.")
+    strings_parser.add_argument("--rsa-key-path", help="RSA private key path. Defaults to the config dir's tedapi_rsa_private.pem.")
+    strings_parser.add_argument("--host", help="Gateway IP for local mode. Auto-discovered from Fleet networking status if omitted. Can also use PW_HOST.")
+    strings_parser.add_argument("--via", choices=["local", "cloud"], default="local", help="Transport: 'local' talks to the gateway over the LAN (works). 'cloud' relays the signed query through the Fleet API device_command endpoint (EXPERIMENTAL: authenticates but the signed-energy 'data' schema is unconfirmed and currently returns HTTP 500).")
+    strings_parser.add_argument("--timeout", type=int, default=15, help="Per-request timeout in seconds.")
+    strings_parser.add_argument("--json", action="store_true", help="Print the raw vitals payload.")
+    strings_parser.set_defaults(func=strings_command)
 
     local_parser = subparsers.add_parser("local", help="Read local Powerwall/TEDAPI metrics with optional pypowerwall support.")
     local_parser.add_argument("--host", default=os.environ.get("PW_HOST"), help="Powerwall host/IP. Can also use PW_HOST.")
