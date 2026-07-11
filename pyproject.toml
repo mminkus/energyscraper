@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "energyscraper"
+version = "0.1.0"
+description = "Tiny CLI for Tesla Fleet energy and vehicle metrics."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.9",
+    "tesla-fleet-api>=1.4.7",
+]
+
+[project.optional-dependencies]
+local = [
+    "pypowerwall>=0.10",
+]
+
+[project.scripts]
+energyscraper = "energyscraper.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["energyscraper*"]

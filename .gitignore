@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+.env.*
+.energyscraper*.json
+.pypowerwall.*
+tedapi_rsa_private.pem
+*.pem
+keys/
+metrics*.json
+MEMORY.md
+python-tesla-fleet-api/
