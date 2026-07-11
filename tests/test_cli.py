@@ -198,10 +198,13 @@ class Pw3StringsTests(unittest.TestCase):
         with redirect_stdout(output):
             print_pw3_strings(self._vitals(), "1707000-11-M--TG0000000000TEST", "192.0.2.10", solar_meter_w=4794)
         rendered = output.getvalue()
-        self.assertIn("String total (DC): 3516 W", rendered)
-        self.assertIn("Total solar (meter): 4794 W", rendered)
+        self.assertIn("DC strings:", rendered)
+        self.assertIn("3516.0 W", rendered)
+        self.assertIn("AC-coupled:", rendered)
         # 4794 - (400+1046+2070) = 1278
-        self.assertIn("AC-coupled solar (meter - strings): 1278 W", rendered)
+        self.assertIn("1278.0 W", rendered)
+        self.assertIn("Total solar:", rendered)
+        self.assertIn("4794.0 W", rendered)
         self.assertIn("244.2 V", rendered)  # rounded
         self.assertIn("disconnected", rendered)  # strings D-F flagged
 

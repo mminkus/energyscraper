@@ -1669,11 +1669,27 @@ def print_pw3_strings(
         if pout is not None:
             print(f"  Inverter AC out: {_fmt_num(pout)} W, {_fmt_num(vout)} V, {_fmt_num(fout)} Hz")
 
-    print(f"  String total (DC): {_fmt_num(string_total)} W")
     if isinstance(solar_meter_w, (int, float)):
-        ac_coupled = solar_meter_w - string_total
-        print(f"  Total solar (meter): {_fmt_num(solar_meter_w)} W")
-        print(f"  AC-coupled solar (meter - strings): {_fmt_num(ac_coupled)} W")
+        # DC strings + AC-coupled = metered solar total; show it as an addition.
+        # Round first and derive AC as (total - DC) so the printed column adds up
+        # exactly rather than drifting by 0.1 from independent rounding.
+        dc_r = round(string_total, 1)
+        total_r = round(solar_meter_w, 1)
+        ac_r = round(total_r - dc_r, 1)
+        rows = [("DC strings", dc_r), ("AC-coupled", ac_r)]
+        total_row = ("Total solar", total_r)
+        label_w = max(len(label) for label, _ in [*rows, total_row]) + 1
+        val_w = max(len(f"{value:.1f}") for _, value in [*rows, total_row])
+
+        def fmt_row(label: str, value: float) -> str:
+            return f"  {label + ':':<{label_w}} {value:>{val_w}.1f} W"
+
+        print(fmt_row(*rows[0]))
+        print(fmt_row(*rows[1]))
+        print("  " + "-" * (label_w + val_w + 3))
+        print(fmt_row(*total_row))
+    else:
+        print(f"  DC strings: {_fmt_num(string_total)} W")
     print(f"  (host {host}, din {mask_serial(din)})")
 
 

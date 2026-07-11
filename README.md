@@ -150,6 +150,31 @@ AC-coupled solar (meter - strings)    production from any AC-coupled inverter
 
 The `AC-coupled solar` line is useful when a separate AC inverter (for example an older string inverter on a different roof face) feeds the same site: it is the difference between the metered solar total and the Powerwall's own DC strings.
 
+### Example
+
+Early morning and overcast, on a Powerwall 3 with three DC strings plus a separate AC-coupled inverter (serial and DIN are masked in human-readable output):
+
+```text
+$ energyscraper strings --site <energy_site_id>
+Inverter serial TG000***EST
+  String 1: 65 V, 1.5 A, 97.5 W
+  String 2: 165 V, 1.5 A, 247.5 W
+  String 3: 195 V, 1.6 A, 312 W
+  String 4: 0 V, 0 A, 0 W
+  String 5: 0 V, 0 A, 0 W
+  String 6: 0 V, 0 A, 0 W  [Pv_Active_Parallel]
+  Inverter AC out: -60 W, 246.4 V, 60 Hz
+  DC strings:  657.0 W
+  AC-coupled:  180.1 W
+  --------------------
+  Total solar: 837.1 W
+  (host 192.0.2.10, din 17070***EST)
+```
+
+The totals read as an addition: the DC strings plus the AC-coupled inverter equal the metered solar total.
+
+In this installation the DC strings map to roof faces as String 1 = north, String 2 = west, String 3 = east; strings 4-6 are unused. The south-facing array is on a separate AC-coupled inverter, so it never appears as a DC string - it shows up only in the `AC-coupled solar` figure (about 180 W here), computed as the metered solar total minus the DC string total.
+
 `strings` reports the leader inverter. On multi-inverter sites the additional inverters require a Wi-Fi session to the gateway, the same limitation the cloud diagnostics apps have.
 
 By default `strings` talks to the gateway over the local network. There is an experimental `--via cloud` mode that relays the same RSA-signed query through the Fleet `device_command` endpoint so it could work away from home. It currently authenticates but the signed-energy request body schema is unconfirmed and the endpoint returns an error, so `--via cloud` is not usable yet. Use the default local mode.
@@ -182,3 +207,11 @@ energyscraper local --host 192.168.91.1 --gateway-password "$PW_GW_PWD" --email 
 That prints a solar monitoring summary with each inverter serial, string voltage/current/power, total string power, and the meter aggregate values for solar, home, Powerwall, and grid. Use `--json` if you want the raw `pypowerwall` payloads.
 
 For Powerwall 3 wired LAN/v1r mode, pass `--rsa-key-path /path/to/tedapi_rsa_private.pem` and the Powerwall vendor-subnet host instead.
+
+## Roadmap
+
+- **Prometheus exporter** (the original motivation): expose the live metrics - site power flows, Powerwall state of energy, per-string PV voltage/current/power, and AC-coupled solar - on an HTTP endpoint in Prometheus text format, for long-term graphing and alerting.
+- **Continuous scrape/daemon mode** for high-resolution history.
+- **Multi-inverter support**: read follower Powerwall 3 inverters, not just the leader.
+- **Remote string reads**: finish the experimental `--via cloud` transport so string data works away from home.
+- **Optional per-string labels** (for example roof orientation) in the output.
