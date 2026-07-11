@@ -1561,7 +1561,7 @@ def _build_cloud_v1r_transport(
     return _CloudV1r(host="cloud", password="unused", rsa_key_path=rsa_key_path, timeout=timeout)
 
 
-def fetch_pw3_vitals(
+def open_tedapi(
     host: str,
     din: str,
     rsa_key_path: str,
@@ -1570,15 +1570,15 @@ def fetch_pw3_vitals(
     fleet_base: str | None = None,
     token: str | None = None,
     site_id: int | None = None,
-) -> dict[str, Any] | None:
-    """Read Powerwall 3 string vitals over the RSA-signed v1r channel.
+) -> Any:
+    """Build a TEDAPI v1r client for reading PW3 string vitals, DIN pre-seeded.
 
     Authenticated purely by the registered RSA key; the DIN is supplied from
     the Fleet API so no gateway password / TEDAPI login is required. ``via``
     selects the transport: ``local`` POSTs to the gateway over the LAN,
-    ``cloud`` relays the same signed message through the Fleet API. Returns
-    the leader inverter's data (followers need a WiFi session, same limit as
-    the cloud diagnostics apps).
+    ``cloud`` relays the same signed message through the Fleet API. The client
+    can be reused for repeated ``get_pw3_vitals(force=True)`` reads (e.g. a
+    polling loop) so construction/login overhead is paid once.
     """
     try:
         from pypowerwall.tedapi import TEDAPI
@@ -1587,11 +1587,15 @@ def fetch_pw3_vitals(
 
     import logging
 
-    # The v1r constructor runs a connect() that tries a password login we do
-    # not use; silence its expected failure noise, then drive the signed path.
+    # The v1r constructor calls connect(), which tries a password login we do
+    # not use and burns ~15s retrying against the gateway. We pre-seed the DIN
+    # and the signed queries never need that login, so no-op connect() during
+    # construction (restored afterwards). Also silence the expected noise.
     pw_logger = logging.getLogger("pypowerwall")
     previous = pw_logger.level
     pw_logger.setLevel(logging.CRITICAL)
+    original_connect = TEDAPI.connect
+    TEDAPI.connect = lambda self, *a, **k: getattr(self, "din", None)  # type: ignore[method-assign]
     try:
         tedapi = TEDAPI(
             host=host,
@@ -1608,9 +1612,10 @@ def fetch_pw3_vitals(
             )
         tedapi.din = din  # pre-seed so the password-gated connect()/login() is skipped
     finally:
+        TEDAPI.connect = original_connect  # type: ignore[method-assign]
         pw_logger.setLevel(previous)
 
-    return tedapi.get_pw3_vitals(force=True)
+    return tedapi
 
 
 def _fmt_num(value: Any) -> str:
@@ -1698,48 +1703,86 @@ async def strings_command(args: argparse.Namespace) -> int:
     if not key_path.exists():
         raise CliError(f"No RSA key at {key_path}. Run `energyscraper pair --site {args.site}` first.")
 
+    interval = getattr(args, "interval", None)
     fleet_base = None
     token = None
+
     async with aiohttp.ClientSession() as session:
-        api, _, _ = await get_api(session, args)
+        api, config, config_path = await get_api(session, args)
         site = api.energySites.create(args.site)
-        info = await site.get_system_info()
-        din = _find_first_key(info, "din")
-        try:
-            live = await site.live_status()
-            solar_meter_w = _find_first_key(live, "solar_power")
-        except TeslaFleetError:
-            solar_meter_w = None
+
+        # The gateway DIN and LAN IP are stable, so cache them per site and
+        # skip the two slow cloud discovery calls on later runs. Only the
+        # solar-meter total (live_status) needs the cloud each read.
+        cached = (config.get("gateways") or {}).get(str(args.site)) or {}
+        din = cached.get("din")
         host = args.host or os.environ.get("PW_HOST")
         if args.via == "local" and not host:
+            host = cached.get("host")
+
+        need_din = args.refresh_gateway or not din
+        need_host = args.via == "local" and (args.refresh_gateway or not host)
+        if need_din:
+            info = await site.get_system_info()
+            din = _find_first_key(info, "din")
+        if need_host:
             net = await site.get_networking_status()
             host = discover_gateway_ip(net)
+        if (need_din or need_host) and din:
+            config.setdefault("gateways", {})[str(args.site)] = {"din": din, "host": host}
+            save_config(config_path, config)
+
+        if not din:
+            raise CliError("Could not determine the gateway DIN from Fleet API.")
+        if args.via == "local" and not host:
+            raise CliError("Could not determine the gateway IP; pass --host.")
         if args.via == "cloud":
             fleet_base = api.server
             token = api._access_token  # pyright: ignore[reportPrivateUsage]
+            if not (fleet_base and token):
+                raise CliError("Could not resolve the Fleet API base URL or access token for cloud mode.")
 
-    if not din:
-        raise CliError("Could not determine the gateway DIN from Fleet API.")
-    if args.via == "local" and not host:
-        raise CliError("Could not determine the gateway IP; pass --host.")
-    if args.via == "cloud" and not (fleet_base and token):
-        raise CliError("Could not resolve the Fleet API base URL or access token for cloud mode.")
+        client = open_tedapi(
+            host or "cloud", din, str(key_path), args.timeout,
+            via=args.via, fleet_base=fleet_base, token=token, site_id=args.site,
+        )
 
-    vitals = fetch_pw3_vitals(
-        host or "cloud",
-        din,
-        str(key_path),
-        args.timeout,
-        via=args.via,
-        fleet_base=fleet_base,
-        token=token,
-        site_id=args.site,
-    )
-    if args.json:
-        print_json({"solar_power_meter_w": solar_meter_w, "vitals": vitals or {}})
-    else:
-        print_pw3_strings(vitals, din, host, solar_meter_w)
-    return 0 if vitals else 1
+        async def read_once() -> tuple[dict[str, Any] | None, float | None]:
+            try:
+                live = await site.live_status()
+                solar = _find_first_key(live, "solar_power")
+            except TeslaFleetError:
+                solar = None
+            return client.get_pw3_vitals(force=True), solar
+
+        if interval is None:
+            vitals, solar_meter_w = await read_once()
+            if args.json:
+                print_json({"solar_power_meter_w": solar_meter_w, "vitals": vitals or {}})
+            else:
+                print_pw3_strings(vitals, din, host or "cloud", solar_meter_w)
+                if not vitals:
+                    print("  (if the gateway IP changed, retry with --refresh-gateway or --host)")
+            return 0 if vitals else 1
+
+        # Watch mode: poll every `interval` seconds until interrupted.
+        where = "cloud" if args.via == "cloud" else host
+        print(f"Polling site {args.site} every {interval:g}s via {where}. Press Ctrl-C to stop.")
+        try:
+            while True:
+                vitals, solar_meter_w = await read_once()
+                stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                if args.json:
+                    print_json({"time": stamp, "solar_power_meter_w": solar_meter_w, "vitals": vitals or {}})
+                else:
+                    print(f"[{stamp}]")
+                    print_pw3_strings(vitals, din, host or "cloud", solar_meter_w)
+                    print()
+                sys.stdout.flush()  # stream each reading promptly for tee/redirects
+                await asyncio.sleep(interval)
+        except KeyboardInterrupt:
+            print("Stopped.")
+            return 0
 
 
 async def pair_command(args: argparse.Namespace) -> int:
@@ -2020,7 +2063,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_args(strings_parser)
     strings_parser.add_argument("--site", type=int, required=True, help="Energy site ID.")
     strings_parser.add_argument("--rsa-key-path", help="RSA private key path. Defaults to the config dir's tedapi_rsa_private.pem.")
-    strings_parser.add_argument("--host", help="Gateway IP for local mode. Auto-discovered from Fleet networking status if omitted. Can also use PW_HOST.")
+    strings_parser.add_argument("interval", nargs="?", type=float, help="Optional poll interval in seconds. If given, keep printing a reading every INTERVAL seconds (like `zpool iostat pool 5`) until Ctrl-C. Omit for a single reading.")
+    strings_parser.add_argument("--host", help="Gateway IP for local mode. Auto-discovered from Fleet networking status if omitted, then cached. Can also use PW_HOST.")
+    strings_parser.add_argument("--refresh-gateway", action="store_true", help="Re-discover and re-cache the gateway DIN/IP instead of using cached values (use if the gateway IP changed).")
     strings_parser.add_argument("--via", choices=["local", "cloud"], default="local", help="Transport: 'local' talks to the gateway over the LAN (works). 'cloud' relays the signed query through the Fleet API device_command endpoint (EXPERIMENTAL: authenticates but the signed-energy 'data' schema is unconfirmed and currently returns HTTP 500).")
     strings_parser.add_argument("--timeout", type=int, default=15, help="Per-request timeout in seconds.")
     strings_parser.add_argument("--json", action="store_true", help="Print the raw vitals payload.")
@@ -2067,7 +2112,10 @@ async def async_main(argv: list[str] | None = None) -> int:
 
 
 def main() -> None:
-    raise SystemExit(asyncio.run(async_main()))
+    try:
+        raise SystemExit(asyncio.run(async_main()))
+    except KeyboardInterrupt:
+        raise SystemExit(130)
 
 
 if __name__ == "__main__":

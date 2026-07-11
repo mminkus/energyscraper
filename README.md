@@ -140,6 +140,14 @@ energyscraper strings --site <energy_site_id>
 energyscraper strings --site <energy_site_id> --json
 ```
 
+To keep watching, pass a poll interval in seconds (like `zpool iostat pool 5`); it prints a timestamped reading each interval until Ctrl-C:
+
+```bash
+energyscraper strings --site <energy_site_id> 30
+```
+
+The gateway DIN and LAN IP are discovered from the Fleet API on the first run and cached in the config file, so later runs skip those cloud round-trips. If the gateway IP changes, pass `--refresh-gateway` (or `--host`).
+
 Output lists each string's voltage, current, and power, marks disconnected/standby strings, and breaks out solar production by source:
 
 ```text
