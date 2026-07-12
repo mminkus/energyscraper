@@ -21,7 +21,8 @@
           "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "Total solar" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 4] } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+          { "matcher": { "id": "byName", "options": "Total solar" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 4] } }, { "id": "custom.fillOpacity", "value": 0 }, { "id": "custom.lineWidth", "value": 1 }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "#8E8E9E" } } ] },
+          { "matcher": { "id": "byName", "options": "AC-coupled" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 4] } }, { "id": "custom.fillOpacity", "value": 0 }, { "id": "custom.lineWidth", "value": 3 }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "#C77DFF" } } ] }
         ]
       },
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
