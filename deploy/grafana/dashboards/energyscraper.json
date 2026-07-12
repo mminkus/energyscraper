@@ -27,7 +27,7 @@
       },
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
-        { "refId": "A", "expr": "energyscraper_pv_string_power_watts", "legendFormat": "String {{string}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "A", "expr": "energyscraper_pv_string_power_watts and on(string) (max_over_time(energyscraper_pv_string_power_watts[24h]) > 0)", "legendFormat": "String {{string}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
         { "refId": "B", "expr": "energyscraper_solar_ac_coupled_watts", "legendFormat": "AC-coupled", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
         { "refId": "C", "expr": "energyscraper_solar_total_watts", "legendFormat": "Total solar", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
       ]
@@ -56,7 +56,7 @@
       "fieldConfig": { "defaults": { "unit": "volt", "custom": { "drawStyle": "line", "fillOpacity": 0, "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
-        { "refId": "A", "expr": "energyscraper_pv_string_voltage_volts", "legendFormat": "String {{string}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
+        { "refId": "A", "expr": "energyscraper_pv_string_voltage_volts and on(string) (max_over_time(energyscraper_pv_string_power_watts[24h]) > 0)", "legendFormat": "String {{string}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
       ]
     },
     {
@@ -68,7 +68,7 @@
       "fieldConfig": { "defaults": { "unit": "amp", "custom": { "drawStyle": "line", "fillOpacity": 0, "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
-        { "refId": "A", "expr": "energyscraper_pv_string_current_amps", "legendFormat": "String {{string}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
+        { "refId": "A", "expr": "energyscraper_pv_string_current_amps and on(string) (max_over_time(energyscraper_pv_string_power_watts[24h]) > 0)", "legendFormat": "String {{string}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
       ]
     },
     {
