@@ -1763,37 +1763,58 @@ async def strings_command(args: argparse.Namespace) -> int:
             via=args.via, fleet_base=fleet_base, token=token, site_id=args.site,
         )
 
-        async def read_once() -> tuple[dict[str, Any] | None, float | None]:
-            try:
-                live = await site.live_status()
-                solar = _find_first_key(live, "solar_power")
-            except TeslaFleetError:
-                solar = None
-            return client.get_pw3_vitals(force=True), solar
+        loop = asyncio.get_event_loop()
+        meter: dict[str, Any] = {"data": {}, "ok_at": None}
 
-        if interval is None:
-            vitals, solar_meter_w = await read_once()
+        async def cloud_solar() -> tuple[float | None, bool]:
+            """Return (solar_power_w, stale).
+
+            Refreshes at most every --cloud-ttl seconds by re-running get_api,
+            so the Fleet token self-heals on long runs (the earlier bug: a
+            static token captured once would expire mid-watch and drop the AC
+            line for the rest of the run). Reuses the last good value if a
+            refresh fails, so a transient cloud error never blanks the AC line.
+            """
+            now = loop.time()
+            if meter["ok_at"] is not None and now - meter["ok_at"] < args.cloud_ttl:
+                return meter["data"].get("solar_power"), False
+            try:
+                fresh_api, _, _ = await get_api(session, args)
+                live = unwrap_response(await fresh_api.energySites.create(args.site).live_status())
+                if isinstance(live, dict):
+                    meter["data"] = live
+                    meter["ok_at"] = now
+                    return live.get("solar_power"), False
+            except TeslaFleetError as exc:
+                print(f"[strings] live_status unavailable: {exc.message}", file=sys.stderr)
+            return meter["data"].get("solar_power"), meter["ok_at"] is not None
+
+        async def emit() -> dict[str, Any] | None:
+            vitals = await loop.run_in_executor(None, lambda: client.get_pw3_vitals(force=True))
+            solar, stale = await cloud_solar()
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
             if args.json:
-                print_json({"solar_power_meter_w": solar_meter_w, "vitals": vitals or {}})
+                print_json({"time": stamp, "solar_power_meter_w": solar, "solar_stale": stale, "vitals": vitals or {}})
             else:
-                print_pw3_strings(vitals, din, host or "cloud", solar_meter_w)
+                if interval is not None:
+                    print(f"[{stamp}]")
+                print_pw3_strings(vitals, din, host or "cloud", solar)
+                if solar is not None and stale:
+                    print("  (solar meter cached; last cloud read failed)")
                 if not vitals:
                     print("  (if the gateway IP changed, retry with --refresh-gateway or --host)")
+            return vitals
+
+        if interval is None:
+            vitals = await emit()
             return 0 if vitals else 1
 
-        # Watch mode: poll every `interval` seconds until interrupted.
         where = "cloud" if args.via == "cloud" else host
         print(f"Polling site {args.site} every {interval:g}s via {where}. Press Ctrl-C to stop.")
         try:
             while True:
-                vitals, solar_meter_w = await read_once()
-                stamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                if args.json:
-                    print_json({"time": stamp, "solar_power_meter_w": solar_meter_w, "vitals": vitals or {}})
-                else:
-                    print(f"[{stamp}]")
-                    print_pw3_strings(vitals, din, host or "cloud", solar_meter_w)
-                    print()
+                await emit()
+                print()
                 sys.stdout.flush()  # stream each reading promptly for tee/redirects
                 await asyncio.sleep(interval)
         except KeyboardInterrupt:
@@ -2230,6 +2251,7 @@ def build_parser() -> argparse.ArgumentParser:
     strings_parser.add_argument("--host", help="Gateway IP for local mode. Auto-discovered from Fleet networking status if omitted, then cached. Can also use PW_HOST.")
     strings_parser.add_argument("--refresh-gateway", action="store_true", help="Re-discover and re-cache the gateway DIN/IP instead of using cached values (use if the gateway IP changed).")
     strings_parser.add_argument("--via", choices=["local", "cloud"], default="local", help="Transport: 'local' talks to the gateway over the LAN (works). 'cloud' relays the signed query through the Fleet API device_command endpoint (EXPERIMENTAL: authenticates but the signed-energy 'data' schema is unconfirmed and currently returns HTTP 500).")
+    strings_parser.add_argument("--cloud-ttl", type=float, default=30.0, help="In watch mode, refresh the cloud solar-meter total at most this often (seconds). Between refreshes the last value is reused.")
     strings_parser.add_argument("--timeout", type=int, default=15, help="Per-request timeout in seconds.")
     strings_parser.add_argument("--json", action="store_true", help="Print the raw vitals payload.")
     strings_parser.set_defaults(func=strings_command)

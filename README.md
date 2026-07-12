@@ -148,6 +148,8 @@ energyscraper strings --site <energy_site_id> 30
 
 The gateway DIN and LAN IP are discovered from the Fleet API on the first run and cached in the config file, so later runs skip those cloud round-trips. If the gateway IP changes, pass `--refresh-gateway` (or `--host`).
 
+In watch mode the per-string values come from the gateway every tick, while the cloud solar-meter total (used for the AC-coupled figure) is refreshed at most every `--cloud-ttl` seconds (default 30) and reused in between; if a cloud read fails the last value is kept rather than dropping the AC-coupled line.
+
 Output lists each string's voltage, current, and power, marks disconnected/standby strings, and breaks out solar production by source:
 
 ```text
