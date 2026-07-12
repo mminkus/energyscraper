@@ -15,6 +15,7 @@ from energyscraper.cli import (
     print_products_summary,
     print_pw3_strings,
     product_probe_targets,
+    render_prometheus,
     summarize_system_info_probe,
 )
 
@@ -213,6 +214,38 @@ class Pw3StringsTests(unittest.TestCase):
         with redirect_stdout(output):
             print_pw3_strings(None, "din", "host")
         self.assertIn("No inverter/string data returned.", output.getvalue())
+
+
+class PrometheusRenderTests(unittest.TestCase):
+    def _vitals(self) -> dict:
+        block = {"serialNumber": "TG0000000000TEST", "PVAC_Pout": 40, "PVAC_Fout": 60}
+        powers = {"A": 400, "B": 1046, "C": 2070}
+        for letter in ("A", "B", "C", "D", "E", "F"):
+            block[f"PVAC_PVMeasuredVoltage_{letter}"] = 150.0 if letter in powers else 0
+            block[f"PVAC_PVCurrent_{letter}"] = 6.3 if letter in powers else 0
+            block[f"PVAC_PVMeasuredPower_{letter}"] = powers.get(letter, 0)
+            block[f"PVAC_PvState_{letter}"] = "Pv_Active"
+        return {"PVAC--1707000-11-M--TG0000000000TEST": block}
+
+    def test_render_contains_expected_metrics(self) -> None:
+        cloud = {"solar_power": 4794, "load_power": 500, "battery_power": -100,
+                 "grid_power": 0, "percentage_charged": 100}
+        out = render_prometheus(self._vitals(), cloud, up=True)
+        self.assertIn("energyscraper_up 1.0", out)
+        self.assertIn('energyscraper_pv_string_power_watts{string="1"} 400', out)
+        self.assertIn('energyscraper_pv_string_power_watts{string="3"} 2070', out)
+        self.assertIn("energyscraper_solar_dc_watts 3516", out)
+        self.assertIn("energyscraper_solar_total_watts 4794", out)
+        self.assertIn("energyscraper_solar_ac_coupled_watts 1278", out)
+        self.assertIn('energyscraper_site_power_watts{flow="grid"} 0', out)
+        self.assertIn("energyscraper_powerwall_charge_percent 100", out)
+        # Every metric family must carry a TYPE line.
+        self.assertIn("# TYPE energyscraper_pv_string_power_watts gauge", out)
+
+    def test_render_down_when_no_vitals(self) -> None:
+        out = render_prometheus(None, {}, up=False)
+        self.assertIn("energyscraper_up 0.0", out)
+        self.assertNotIn("pv_string_power_watts", out)
 
 
 if __name__ == "__main__":

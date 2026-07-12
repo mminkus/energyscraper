@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: energyscraper
+    # The exporter runs on the host: `energyscraper exporter --site <id>`.
+    # host.docker.internal resolves to the host via the extra_hosts mapping
+    # in docker-compose.yml. If the exporter runs elsewhere, change this.
+    static_configs:
+      - targets: ["host.docker.internal:9835"]

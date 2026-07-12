@@ -1,0 +1,94 @@
+{
+  "uid": "energyscraper",
+  "title": "energyscraper - Solar Strings",
+  "tags": ["energyscraper", "solar", "powerwall"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-12h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Solar power by string",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "energyscraper-prom" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Total solar" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 4] } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "refId": "A", "expr": "energyscraper_pv_string_power_watts", "legendFormat": "String {{string}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "B", "expr": "energyscraper_solar_ac_coupled_watts", "legendFormat": "AC-coupled", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "C", "expr": "energyscraper_solar_total_watts", "legendFormat": "Total solar", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Site power flows",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "energyscraper-prom" },
+      "fieldConfig": {
+        "defaults": { "unit": "watt", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "refId": "A", "expr": "energyscraper_site_power_watts", "legendFormat": "{{flow}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "String voltage",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "energyscraper-prom" },
+      "fieldConfig": { "defaults": { "unit": "volt", "custom": { "drawStyle": "line", "fillOpacity": 0, "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "expr": "energyscraper_pv_string_voltage_volts", "legendFormat": "String {{string}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "String current",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "energyscraper-prom" },
+      "fieldConfig": { "defaults": { "unit": "amp", "custom": { "drawStyle": "line", "fillOpacity": 0, "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "expr": "energyscraper_pv_string_current_amps", "legendFormat": "String {{string}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "gauge",
+      "title": "Powerwall charge",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "energyscraper-prom" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 20 }, { "color": "green", "value": 50 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "showThresholdLabels": false, "showThresholdMarkers": true },
+      "targets": [
+        { "refId": "A", "expr": "energyscraper_powerwall_charge_percent", "legendFormat": "Charge", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
+      ]
+    }
+  ]
+}

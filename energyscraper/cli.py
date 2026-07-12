@@ -1698,6 +1698,44 @@ def print_pw3_strings(
     print(f"  (host {host}, din {mask_serial(din)})")
 
 
+async def resolve_gateway(
+    site: Any,
+    config: dict[str, Any],
+    config_path: Path,
+    args: argparse.Namespace,
+) -> tuple[str, str | None]:
+    """Return (din, host) for the site, using cached values when available.
+
+    The gateway DIN and LAN IP are stable, so they are cached per site in the
+    config file. Only when missing (or --refresh-gateway) do we pay the slow
+    cloud discovery calls. Raises CliError if they cannot be determined.
+    """
+    cached = (config.get("gateways") or {}).get(str(args.site)) or {}
+    din = cached.get("din")
+    host = getattr(args, "host", None) or os.environ.get("PW_HOST")
+    if args.via == "local" and not host:
+        host = cached.get("host")
+
+    refresh = getattr(args, "refresh_gateway", False)
+    need_din = refresh or not din
+    need_host = args.via == "local" and (refresh or not host)
+    if need_din:
+        info = await site.get_system_info()
+        din = _find_first_key(info, "din")
+    if need_host:
+        net = await site.get_networking_status()
+        host = discover_gateway_ip(net)
+    if (need_din or need_host) and din:
+        config.setdefault("gateways", {})[str(args.site)] = {"din": din, "host": host}
+        save_config(config_path, config)
+
+    if not din:
+        raise CliError("Could not determine the gateway DIN from Fleet API.")
+    if args.via == "local" and not host:
+        raise CliError("Could not determine the gateway IP; pass --host.")
+    return din, host
+
+
 async def strings_command(args: argparse.Namespace) -> int:
     key_path = Path(args.rsa_key_path).expanduser() if args.rsa_key_path else default_rsa_key_path()
     if not key_path.exists():
@@ -1711,31 +1749,9 @@ async def strings_command(args: argparse.Namespace) -> int:
         api, config, config_path = await get_api(session, args)
         site = api.energySites.create(args.site)
 
-        # The gateway DIN and LAN IP are stable, so cache them per site and
-        # skip the two slow cloud discovery calls on later runs. Only the
-        # solar-meter total (live_status) needs the cloud each read.
-        cached = (config.get("gateways") or {}).get(str(args.site)) or {}
-        din = cached.get("din")
-        host = args.host or os.environ.get("PW_HOST")
-        if args.via == "local" and not host:
-            host = cached.get("host")
-
-        need_din = args.refresh_gateway or not din
-        need_host = args.via == "local" and (args.refresh_gateway or not host)
-        if need_din:
-            info = await site.get_system_info()
-            din = _find_first_key(info, "din")
-        if need_host:
-            net = await site.get_networking_status()
-            host = discover_gateway_ip(net)
-        if (need_din or need_host) and din:
-            config.setdefault("gateways", {})[str(args.site)] = {"din": din, "host": host}
-            save_config(config_path, config)
-
-        if not din:
-            raise CliError("Could not determine the gateway DIN from Fleet API.")
-        if args.via == "local" and not host:
-            raise CliError("Could not determine the gateway IP; pass --host.")
+        # DIN/IP are cached per site (see resolve_gateway); only live_status
+        # needs the cloud on each read.
+        din, host = await resolve_gateway(site, config, config_path, args)
         if args.via == "cloud":
             fleet_base = api.server
             token = api._access_token  # pyright: ignore[reportPrivateUsage]
@@ -1783,6 +1799,153 @@ async def strings_command(args: argparse.Namespace) -> int:
         except KeyboardInterrupt:
             print("Stopped.")
             return 0
+
+
+def render_prometheus(
+    vitals: dict[str, Any] | None,
+    cloud: dict[str, Any],
+    up: bool,
+) -> str:
+    """Render vitals + cached cloud data as Prometheus text exposition."""
+    lines: list[str] = []
+
+    def metric(name: str, help_text: str, samples: list[tuple[str, float]]) -> None:
+        if not samples:
+            return
+        lines.append(f"# HELP energyscraper_{name} {help_text}")
+        lines.append(f"# TYPE energyscraper_{name} gauge")
+        for labels, value in samples:
+            label_str = f"{{{labels}}}" if labels else ""
+            lines.append(f"energyscraper_{name}{label_str} {value}")
+
+    metric("up", "1 if the last local vitals read succeeded.", [("", 1.0 if up else 0.0)])
+
+    volt: list[tuple[str, float]] = []
+    curr: list[tuple[str, float]] = []
+    power: list[tuple[str, float]] = []
+    string_total = 0.0
+    if vitals:
+        for key, block in vitals.items():
+            if not key.startswith("PVAC--"):
+                continue
+            for index, letter in enumerate(PV_STRING_NAMES, start=1):
+                v = block.get(f"PVAC_PVMeasuredVoltage_{letter}")
+                c = block.get(f"PVAC_PVCurrent_{letter}")
+                p = block.get(f"PVAC_PVMeasuredPower_{letter}")
+                if v is None and c is None and p is None:
+                    continue
+                lbl = f'string="{index}"'
+                if isinstance(v, (int, float)):
+                    volt.append((lbl, v))
+                if isinstance(c, (int, float)):
+                    curr.append((lbl, c))
+                if isinstance(p, (int, float)):
+                    power.append((lbl, p))
+                    string_total += p
+            pout = block.get("PVAC_Pout")
+            fout = block.get("PVAC_Fout")
+            if isinstance(pout, (int, float)):
+                metric("inverter_ac_out_watts", "Inverter AC output (includes battery).", [("", pout)])
+            if isinstance(fout, (int, float)):
+                metric("inverter_frequency_hz", "Inverter AC frequency.", [("", fout)])
+
+    metric("pv_string_voltage_volts", "Per-string DC voltage.", volt)
+    metric("pv_string_current_amps", "Per-string DC current.", curr)
+    metric("pv_string_power_watts", "Per-string DC power.", power)
+    if power:
+        metric("solar_dc_watts", "Sum of the Powerwall DC strings.", [("", string_total)])
+
+    solar_total = cloud.get("solar_power")
+    if isinstance(solar_total, (int, float)):
+        metric("solar_total_watts", "Metered solar total (all sources).", [("", solar_total)])
+        if power:
+            metric(
+                "solar_ac_coupled_watts",
+                "AC-coupled solar (metered total minus DC strings).",
+                [("", solar_total - string_total)],
+            )
+
+    flows = [
+        (flow, cloud.get(f"{flow}_power"))
+        for flow in ("solar", "load", "battery", "grid")
+    ]
+    site_samples = [(f'flow="{flow}"', val) for flow, val in flows if isinstance(val, (int, float))]
+    metric("site_power_watts", "Site power flow by source.", site_samples)
+
+    pct = cloud.get("percentage_charged")
+    if isinstance(pct, (int, float)):
+        metric("powerwall_charge_percent", "Powerwall state of charge.", [("", pct)])
+
+    return "\n".join(lines) + "\n"
+
+
+async def exporter_command(args: argparse.Namespace) -> int:
+    from aiohttp import web
+
+    key_path = Path(args.rsa_key_path).expanduser() if args.rsa_key_path else default_rsa_key_path()
+    if not key_path.exists():
+        raise CliError(f"No RSA key at {key_path}. Run `energyscraper pair --site {args.site}` first.")
+
+    session = aiohttp.ClientSession()
+    api, config, config_path = await get_api(session, args)
+    site = api.energySites.create(args.site)
+    din, host = await resolve_gateway(site, config, config_path, args)
+
+    fleet_base = token = None
+    if args.via == "cloud":
+        fleet_base = api.server
+        token = api._access_token  # pyright: ignore[reportPrivateUsage]
+
+    client = open_tedapi(
+        host or "cloud", din, str(key_path), args.timeout,
+        via=args.via, fleet_base=fleet_base, token=token, site_id=args.site,
+    )
+
+    loop = asyncio.get_event_loop()
+    cloud_cache: dict[str, Any] = {"at": 0.0, "data": {}}
+
+    async def cloud_data() -> dict[str, Any]:
+        now = loop.time()
+        if now - cloud_cache["at"] < args.ttl:
+            return cloud_cache["data"]
+        try:
+            # Re-run get_api so the Fleet token is refreshed as needed on long runs.
+            refreshed, _, _ = await get_api(session, args)
+            live = unwrap_response(await refreshed.energySites.create(args.site).live_status())
+            if isinstance(live, dict):
+                cloud_cache["data"] = live
+                cloud_cache["at"] = now
+        except TeslaFleetError as exc:
+            print(f"[exporter] live_status failed: {exc.message}", file=sys.stderr)
+        return cloud_cache["data"]
+
+    async def metrics_handler(_request: web.Request) -> web.Response:
+        vitals = await loop.run_in_executor(None, lambda: client.get_pw3_vitals(force=True))
+        cloud = await cloud_data()
+        body = render_prometheus(vitals, cloud, up=bool(vitals))
+        return web.Response(text=body, content_type="text/plain", charset="utf-8")
+
+    async def root_handler(_request: web.Request) -> web.Response:
+        return web.Response(text="energyscraper prometheus exporter\nMetrics: /metrics\n")
+
+    app = web.Application()
+    app.router.add_get("/metrics", metrics_handler)
+    app.router.add_get("/", root_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    server = web.TCPSite(runner, args.bind, args.port)
+    await server.start()
+    print(f"energyscraper exporter on http://{args.bind}:{args.port}/metrics (site {args.site}, via {args.via})")
+    print("Press Ctrl-C to stop.")
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except KeyboardInterrupt:
+        print("Stopped.")
+    finally:
+        await runner.cleanup()
+        await session.close()
+    return 0
 
 
 async def pair_command(args: argparse.Namespace) -> int:
@@ -2070,6 +2233,19 @@ def build_parser() -> argparse.ArgumentParser:
     strings_parser.add_argument("--timeout", type=int, default=15, help="Per-request timeout in seconds.")
     strings_parser.add_argument("--json", action="store_true", help="Print the raw vitals payload.")
     strings_parser.set_defaults(func=strings_command)
+
+    exporter_parser = subparsers.add_parser("exporter", help="Serve PV string + site metrics on a Prometheus /metrics endpoint for Grafana.")
+    add_common_args(exporter_parser)
+    exporter_parser.add_argument("--site", type=int, required=True, help="Energy site ID.")
+    exporter_parser.add_argument("--rsa-key-path", help="RSA private key path. Defaults to the config dir's tedapi_rsa_private.pem.")
+    exporter_parser.add_argument("--host", help="Gateway IP for local mode. Auto-discovered and cached if omitted. Can also use PW_HOST.")
+    exporter_parser.add_argument("--refresh-gateway", action="store_true", help="Re-discover and re-cache the gateway DIN/IP.")
+    exporter_parser.add_argument("--via", choices=["local", "cloud"], default="local", help="Transport for the string read (local is the working path).")
+    exporter_parser.add_argument("--bind", default="0.0.0.0", help="Address to bind the HTTP server (default 0.0.0.0).")
+    exporter_parser.add_argument("--port", type=int, default=9835, help="Port for the /metrics endpoint (default 9835).")
+    exporter_parser.add_argument("--ttl", type=float, default=30.0, help="Seconds to cache the cloud live_status (solar meter/site power) between scrapes.")
+    exporter_parser.add_argument("--timeout", type=int, default=15, help="Per-request timeout in seconds.")
+    exporter_parser.set_defaults(func=exporter_command)
 
     local_parser = subparsers.add_parser("local", help="Read local Powerwall/TEDAPI metrics with optional pypowerwall support.")
     local_parser.add_argument("--host", default=os.environ.get("PW_HOST"), help="Powerwall host/IP. Can also use PW_HOST.")

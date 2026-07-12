@@ -216,10 +216,47 @@ That prints a solar monitoring summary with each inverter serial, string voltage
 
 For Powerwall 3 wired LAN/v1r mode, pass `--rsa-key-path /path/to/tedapi_rsa_private.pem` and the Powerwall vendor-subnet host instead.
 
+## Prometheus and Grafana
+
+The `exporter` command serves the live metrics on a Prometheus `/metrics`
+endpoint so they can be scraped into Grafana:
+
+```bash
+energyscraper exporter --site <energy_site_id>
+# serves http://0.0.0.0:9835/metrics
+```
+
+Exposed metrics (all gauges, prefixed `energyscraper_`):
+
+```text
+pv_string_voltage_volts{string="1".."6"}
+pv_string_current_amps{string="1".."6"}
+pv_string_power_watts{string="1".."6"}
+solar_dc_watts                 sum of the DC strings
+solar_ac_coupled_watts         metered total minus DC strings
+solar_total_watts              metered solar total
+site_power_watts{flow="solar|load|battery|grid"}
+powerwall_charge_percent
+inverter_ac_out_watts
+inverter_frequency_hz
+up                             1 if the last local read succeeded
+```
+
+PV strings are read locally on every scrape; the cloud solar-meter/site-power
+values are cached for `--ttl` seconds (default 30) so a fast scrape interval
+does not hit Fleet API rate limits.
+
+A ready-to-run Prometheus + Grafana stack (with the datasource and a dashboard
+pre-provisioned) lives in [`deploy/`](deploy/) - see `deploy/README.md`:
+
+```bash
+energyscraper exporter --site <energy_site_id>   # on the host
+cd deploy && docker compose up -d                 # Prometheus + Grafana
+```
+
 ## Roadmap
 
-- **Prometheus exporter** (the original motivation): expose the live metrics - site power flows, Powerwall state of energy, per-string PV voltage/current/power, and AC-coupled solar - on an HTTP endpoint in Prometheus text format, for long-term graphing and alerting.
-- **Continuous scrape/daemon mode** for high-resolution history.
+- **Continuous scrape/daemon mode** for high-resolution history (the exporter covers the pull model; a push/remote-write mode could follow).
 - **Multi-inverter support**: read follower Powerwall 3 inverters, not just the leader.
 - **Remote string reads**: finish the experimental `--via cloud` transport so string data works away from home.
-- **Optional per-string labels** (for example roof orientation) in the output.
+- **Optional per-string labels** (for example roof orientation) in the output and metrics.
