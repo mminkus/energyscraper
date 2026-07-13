@@ -40,6 +40,54 @@ docker compose up -d
 - Prometheus: http://localhost:9090 (check Status -> Targets shows the
   `energyscraper` target UP).
 
+This Docker stack is the **dev/quick-start** environment. For a persistent
+deploy, run Prometheus + Grafana natively and the exporter under systemd (see
+below).
+
+## Production (systemd)
+
+Run the exporter as a dedicated non-privileged user so it survives reboots
+(which tmux/`disown` cannot). Best placed on a box with a LAN route to the
+gateway, alongside a native Prometheus.
+
+```bash
+# 1. dedicated user + install (adjust the venv path to taste)
+sudo useradd --system --home-dir /var/lib/energyscraper --shell /usr/sbin/nologin energyscraper
+sudo install -d -o energyscraper -g energyscraper -m 0700 /opt/energyscraper
+sudo -u energyscraper python3 -m venv /opt/energyscraper/venv
+sudo -u energyscraper /opt/energyscraper/venv/bin/pip install -e /path/to/energyscraper
+
+# 2. state dir + secrets (copied from wherever you paired). Both 0600.
+sudo install -d -o energyscraper -g energyscraper -m 0700 /var/lib/energyscraper
+sudo install -o energyscraper -g energyscraper -m 0600 \
+    ~/.config/energyscraper/config.json            /var/lib/energyscraper/config.json
+sudo install -o energyscraper -g energyscraper -m 0600 \
+    ~/.config/energyscraper/tedapi_rsa_private.pem /var/lib/energyscraper/tedapi_rsa_private.pem
+
+# 3. install the unit (edit <SITE_ID> and the venv path first)
+sudo cp deploy/energyscraper-exporter.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now energyscraper-exporter.service
+
+# 4. verify
+systemctl status energyscraper-exporter.service --no-pager
+curl -s localhost:9835/metrics | head
+```
+
+Then point your native Prometheus at `localhost:9835` (the unit binds loopback,
+so no `host.docker.internal` and no `--bind 0.0.0.0` needed):
+
+```yaml
+scrape_configs:
+  - job_name: energyscraper
+    static_configs:
+      - targets: ['localhost:9835']
+```
+
+The exporter caches the gateway DIN/IP into `config.json` on first run, so the
+state dir must stay writable (the unit's `StateDirectory` handles that). Logs:
+`journalctl -u energyscraper-exporter -f`.
+
 ## Notes
 
 - `host.docker.internal` is mapped to the host gateway so the containers can

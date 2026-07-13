@@ -1,0 +1,62 @@
+[Unit]
+# energyscraper Prometheus exporter.
+# Runs as a dedicated non-privileged user; safe for an unprivileged LXC.
+Description=energyscraper Prometheus exporter
+Documentation=https://github.com/your-user/energyscraper
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=energyscraper
+Group=energyscraper
+
+# systemd creates and owns /var/lib/energyscraper (mode 0700) for this service.
+# Put config.json and tedapi_rsa_private.pem there (both 0600). The exporter
+# also writes the cached gateway DIN/IP back into config.json, so this dir
+# must stay writable.
+StateDirectory=energyscraper
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/energyscraper
+Environment=ENERGYSCRAPER_CONFIG=/var/lib/energyscraper/config.json
+
+# --- edit these two things ---
+#   1. the venv path where `pip install -e .` put the entry point
+#   2. <SITE_ID> below
+# Bind loopback: Prometheus is local, so nothing else needs to reach :9835.
+ExecStart=/opt/energyscraper/venv/bin/energyscraper exporter \
+    --site <SITE_ID> \
+    --bind 127.0.0.1 \
+    --port 9835 \
+    --ttl 30
+
+Restart=always
+RestartSec=10
+# Don't hammer if it crash-loops (e.g. bad key): 5 tries / 5 min, then give up.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# --- hardening -------------------------------------------------------------
+# All of this is optional. If the service fails to start in your unprivileged
+# LXC with an error like "Failed to set up mount namespacing" or
+# "Operation not permitted", comment out the mount/namespace-based lines
+# (ProtectSystem, ProtectHome, PrivateTmp, PrivateDevices, RestrictNamespaces,
+# and SystemCallFilter) -- unprivileged containers sometimes block them.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
