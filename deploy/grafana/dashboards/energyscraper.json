@@ -83,7 +83,7 @@
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
         { "refId": "A", "expr": "avg_over_time(energyscraper_pv_string_power_watts[$smoothing]) and on(string) (max_over_time(energyscraper_pv_string_power_watts[24h]) > 0)", "legendFormat": "String {{string}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
-        { "refId": "B", "expr": "avg_over_time(energyscraper_solar_ac_coupled_watts[$smoothing])", "legendFormat": "AC-coupled", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "B", "expr": "clamp_min(avg_over_time(energyscraper_solar_ac_coupled_watts[$smoothing]), 0)", "legendFormat": "AC-coupled", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
         { "refId": "C", "expr": "avg_over_time(energyscraper_solar_total_watts[$smoothing])", "legendFormat": "Total solar", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
       ]
     },
