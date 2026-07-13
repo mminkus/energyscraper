@@ -74,7 +74,7 @@
         },
         "overrides": [
           { "matcher": { "id": "byName", "options": "Total solar" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 4] } }, { "id": "custom.fillOpacity", "value": 0 }, { "id": "custom.lineWidth", "value": 1 }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "#8E8E9E" } } ] },
-          { "matcher": { "id": "byName", "options": "AC-coupled" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 4] } }, { "id": "custom.fillOpacity", "value": 0 }, { "id": "custom.lineWidth", "value": 3 }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "#9085e9" } } ] },
+          { "matcher": { "id": "byName", "options": "AC-coupled" }, "properties": [ { "id": "custom.fillOpacity", "value": 0 }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "#9085e9" } } ] },
           { "matcher": { "id": "byName", "options": "String 1" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } } ] },
           { "matcher": { "id": "byName", "options": "String 2" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#199e70" } } ] },
           { "matcher": { "id": "byName", "options": "String 3" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#c98500" } } ] }

@@ -88,6 +88,16 @@ The exporter caches the gateway DIN/IP into `config.json` on first run, so the
 state dir must stay writable (the unit's `StateDirectory` handles that). Logs:
 `journalctl -u energyscraper-exporter -f`.
 
+To run any command manually as the service user, pass the config path yourself
+- the `ENERGYSCRAPER_CONFIG` env var only applies inside the unit, and `sudo`
+scrubs the environment, so a bare `sudo -u energyscraper ... metrics` looks in
+`~/.config` (empty) and reports "Not authenticated":
+
+```bash
+sudo -u energyscraper env ENERGYSCRAPER_CONFIG=/var/lib/energyscraper/config.json \
+    /opt/energyscraper/venv/bin/energyscraper metrics
+```
+
 ## Notes
 
 - `host.docker.internal` is mapped to the host gateway so the containers can
