@@ -55,7 +55,11 @@ gateway, alongside a native Prometheus.
 sudo useradd --system --home-dir /var/lib/energyscraper --shell /usr/sbin/nologin energyscraper
 sudo install -d -o energyscraper -g energyscraper -m 0700 /opt/energyscraper
 sudo -u energyscraper python3 -m venv /opt/energyscraper/venv
-sudo -u energyscraper /opt/energyscraper/venv/bin/pip install -e '/path/to/energyscraper[local]'
+# Regular (not -e) install: the code lands in the venv's site-packages under
+# /opt so it stays visible to the sandboxed service. An editable (-e) install
+# leaves the package in your source checkout, which ProtectHome/ProtectSystem
+# in the unit can hide from the service (ModuleNotFoundError at startup).
+sudo -u energyscraper /opt/energyscraper/venv/bin/pip install '/path/to/energyscraper[local]'
 
 # 2. state dir + secrets (copied from wherever you paired). Both 0600.
 sudo install -d -o energyscraper -g energyscraper -m 0700 /var/lib/energyscraper

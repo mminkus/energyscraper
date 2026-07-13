@@ -5,6 +5,9 @@ Description=energyscraper Prometheus exporter
 Documentation=https://github.com/your-user/energyscraper
 Wants=network-online.target
 After=network-online.target
+# Don't hammer if it crash-loops (e.g. bad key): 5 tries / 5 min, then give up.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -32,9 +35,6 @@ ExecStart=/opt/energyscraper/venv/bin/energyscraper exporter \
 
 Restart=always
 RestartSec=10
-# Don't hammer if it crash-loops (e.g. bad key): 5 tries / 5 min, then give up.
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # --- hardening -------------------------------------------------------------
 # All of this is optional. If the service fails to start in your unprivileged
