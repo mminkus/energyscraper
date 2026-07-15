@@ -5,19 +5,19 @@
   "timezone": "browser",
   "schemaVersion": 39,
   "refresh": "30s",
-  "time": { "from": "now-12h", "to": "now" },
+  "time": { "from": "now/d", "to": "now/d" },
   "templating": { "list": [
     {
       "name": "smoothing",
       "label": "Smoothing",
       "type": "custom",
       "query": "raw : 30s, 1m, 2m, 5m, 10m",
-      "current": { "text": "2m", "value": "2m", "selected": true },
+      "current": { "text": "5m", "value": "5m", "selected": true },
       "options": [
         { "text": "raw", "value": "30s", "selected": false },
         { "text": "1m", "value": "1m", "selected": false },
-        { "text": "2m", "value": "2m", "selected": true },
-        { "text": "5m", "value": "5m", "selected": false },
+        { "text": "2m", "value": "2m", "selected": false },
+        { "text": "5m", "value": "5m", "selected": true },
         { "text": "10m", "value": "10m", "selected": false }
       ],
       "includeAll": false,
@@ -31,7 +31,7 @@
       "type": "timeseries",
       "title": "Total solar production by source",
       "description": "Stacked: the Powerwall's DC strings plus the SMA AC-coupled inverter. The top of the stack is the metered solar total; the dashed line is the meter reading itself, as a reconciliation check. Series are smoothed with avg_over_time over the $smoothing window; raw samples stay in Prometheus.",
-      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 0 },
+      "gridPos": { "h": 12, "w": 12, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "energyscraper-prom" },
       "fieldConfig": {
         "defaults": {
@@ -73,7 +73,6 @@
           "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "Total solar" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 4] } }, { "id": "custom.fillOpacity", "value": 0 }, { "id": "custom.lineWidth", "value": 1 }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "#8E8E9E" } } ] },
           { "matcher": { "id": "byName", "options": "AC-coupled" }, "properties": [ { "id": "custom.fillOpacity", "value": 0 }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "#9085e9" } } ] },
           { "matcher": { "id": "byName", "options": "String 1" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } } ] },
           { "matcher": { "id": "byName", "options": "String 2" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#199e70" } } ] },
@@ -83,15 +82,14 @@
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
         { "refId": "A", "expr": "avg_over_time(energyscraper_pv_string_power_watts[$smoothing]) and on(string) (max_over_time(energyscraper_pv_string_power_watts[24h]) > 0)", "legendFormat": "String {{string}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
-        { "refId": "B", "expr": "clamp_min(avg_over_time(energyscraper_solar_ac_coupled_watts[$smoothing]), 0)", "legendFormat": "AC-coupled", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
-        { "refId": "C", "expr": "avg_over_time(energyscraper_solar_total_watts[$smoothing])", "legendFormat": "Total solar", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
+        { "refId": "B", "expr": "clamp_min(avg_over_time(energyscraper_solar_ac_coupled_watts[$smoothing]), 0)", "legendFormat": "AC-coupled", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
       ]
     },
     {
       "id": 2,
       "type": "timeseries",
       "title": "Site power flows",
-      "gridPos": { "h": 12, "w": 12, "x": 12, "y": 12 },
+      "gridPos": { "h": 9, "w": 6, "x": 12, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "energyscraper-prom" },
       "fieldConfig": {
         "defaults": { "unit": "watt", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
@@ -106,7 +104,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "String voltage",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 9 },
       "datasource": { "type": "prometheus", "uid": "energyscraper-prom" },
       "fieldConfig": { "defaults": { "unit": "volt", "custom": { "drawStyle": "line", "fillOpacity": 0, "showPoints": "never", "lineWidth": 2 } }, "overrides": [
         { "matcher": { "id": "byName", "options": "String 1" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } } ] },
@@ -122,7 +120,7 @@
       "id": 4,
       "type": "timeseries",
       "title": "String current",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 9 },
       "datasource": { "type": "prometheus", "uid": "energyscraper-prom" },
       "fieldConfig": { "defaults": { "unit": "amp", "custom": { "drawStyle": "line", "fillOpacity": 0, "showPoints": "never", "lineWidth": 2 } }, "overrides": [
         { "matcher": { "id": "byName", "options": "String 1" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } } ] },
@@ -138,7 +136,7 @@
       "id": 5,
       "type": "gauge",
       "title": "Powerwall charge",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
+      "gridPos": { "h": 9, "w": 6, "x": 18, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "energyscraper-prom" },
       "fieldConfig": {
         "defaults": {
