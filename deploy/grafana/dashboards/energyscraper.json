@@ -158,6 +158,7 @@
       "title": "Energy by source",
       "description": "Energy per source over the selected time range = average power x range length (avg_over_time * $__range_s / 3.6e6 -> kWh). Interval-independent and honors the time picker (Today by default). South SMA is the metered solar total minus the Powerwall's DC strings.",
       "gridPos": { "h": 7, "w": 12, "x": 12, "y": 17 },
+      "timeFrom": "24h",
       "datasource": { "type": "prometheus", "uid": "energyscraper-prom" },
       "fieldConfig": {
         "defaults": { "unit": "kwatth", "color": { "mode": "palette-classic" } },
