@@ -151,6 +151,35 @@
       "targets": [
         { "refId": "A", "expr": "energyscraper_powerwall_charge_percent", "legendFormat": "Charge", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
       ]
+    },
+    {
+      "id": 7,
+      "type": "piechart",
+      "title": "Energy by source",
+      "description": "Energy per source over the selected time range = average power x range length (avg_over_time * $__range_s / 3.6e6 -> kWh). Interval-independent and honors the time picker (Today by default). South SMA is the metered solar total minus the Powerwall's DC strings.",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 17 },
+      "datasource": { "type": "prometheus", "uid": "energyscraper-prom" },
+      "fieldConfig": {
+        "defaults": { "unit": "kwatth", "color": { "mode": "palette-classic" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "North (String 1)" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } } ] },
+          { "matcher": { "id": "byName", "options": "West (String 2)" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#199e70" } } ] },
+          { "matcher": { "id": "byName", "options": "East (String 3)" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#c98500" } } ] },
+          { "matcher": { "id": "byName", "options": "South (SMA)" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "#9085e9" } } ] }
+        ]
+      },
+      "options": {
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "values": ["value", "percent"] },
+        "tooltip": { "mode": "single", "sort": "desc" }
+      },
+      "targets": [
+        { "refId": "A", "expr": "avg_over_time(energyscraper_pv_string_power_watts{string=\"1\"}[$__range]) * $__range_s / 3600000", "legendFormat": "North (String 1)", "instant": true, "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "B", "expr": "avg_over_time(energyscraper_pv_string_power_watts{string=\"2\"}[$__range]) * $__range_s / 3600000", "legendFormat": "West (String 2)", "instant": true, "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "C", "expr": "avg_over_time(energyscraper_pv_string_power_watts{string=\"3\"}[$__range]) * $__range_s / 3600000", "legendFormat": "East (String 3)", "instant": true, "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "D", "expr": "clamp_min(avg_over_time(energyscraper_solar_ac_coupled_watts[$__range]), 0) * $__range_s / 3600000", "legendFormat": "South (SMA)", "instant": true, "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
+      ]
     }
   ]
 }
