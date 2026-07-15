@@ -32,8 +32,38 @@ Tesla's apps provide excellent high-level information, but they intentionally hi
 - Local Powerwall telemetry
 - Per-string PV metrics
 - Charge-on-Solar aware site metrics
-- Prometheus exporter *(coming soon)*
+- Prometheus exporter with a ready-to-run Grafana dashboard
 - JSON output for scripting
+
+## Dashboard
+
+The [`deploy/`](deploy/) stack ships a ready-to-run Prometheus + Grafana setup.
+Here is a full day on a Powerwall 3 with three DC strings (north, west, east)
+plus a south-facing AC-coupled SMA inverter:
+
+![energyscraper Grafana dashboard](screenshots/dashboard-overview.png)
+
+Total solar production by source, stacked: the Powerwall's DC strings plus the
+AC-coupled SMA sum to the metered total (the dashed line is the meter reading,
+as a reconciliation check).
+
+![Total solar production by source](screenshots/total-solar-by-source.png)
+
+Solar power by string, where the four roof orientations pull apart across the
+day: east (orange) leads the morning, west (green) takes over in the afternoon,
+north (blue) stays low and flat, and the south SMA (violet) is a broad midday
+hump.
+
+![Solar power by string](screenshots/solar-power-by-string.png)
+
+Site power flows, Powerwall state of charge, and per-string current and
+voltage:
+
+![Site power flows, charge, and per-string current/voltage](screenshots/site-and-string-detail.png)
+
+Energy by source over the last 24 hours: daily kWh and share per orientation.
+
+![Energy by source](screenshots/energy-by-source.png)
 
 ## Setup
 
