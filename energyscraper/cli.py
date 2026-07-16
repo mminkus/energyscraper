@@ -1758,10 +1758,13 @@ async def strings_command(args: argparse.Namespace) -> int:
             if not (fleet_base and token):
                 raise CliError("Could not resolve the Fleet API base URL or access token for cloud mode.")
 
-        client = open_tedapi(
-            host or "cloud", din, str(key_path), args.timeout,
-            via=args.via, fleet_base=fleet_base, token=token, site_id=args.site,
-        )
+        def make_client() -> Any:
+            return open_tedapi(
+                host or "cloud", din, str(key_path), args.timeout,
+                via=args.via, fleet_base=fleet_base, token=token, site_id=args.site,
+            )
+
+        client = make_client()
 
         loop = asyncio.get_event_loop()
         meter: dict[str, Any] = {"data": {}, "ok_at": None}
@@ -1790,7 +1793,16 @@ async def strings_command(args: argparse.Namespace) -> int:
             return meter["data"].get("solar_power"), meter["ok_at"] is not None
 
         async def emit() -> dict[str, Any] | None:
+            nonlocal client
             vitals = await loop.run_in_executor(None, lambda: client.get_pw3_vitals(force=True))
+            if not vitals:
+                # After a LAN outage pypowerwall's reconnect path wipes the
+                # pre-seeded DIN and retries a password login this setup can
+                # never pass, wedging the client for good. A fresh client
+                # (construction does no network I/O) re-seeds the DIN so the
+                # next read goes straight to a signed query and recovers as
+                # soon as the gateway is reachable again.
+                client = make_client()
             solar, stale = await cloud_solar()
             stamp = time.strftime("%Y-%m-%d %H:%M:%S")
             if args.json:
@@ -1917,10 +1929,13 @@ async def exporter_command(args: argparse.Namespace) -> int:
         fleet_base = api.server
         token = api._access_token  # pyright: ignore[reportPrivateUsage]
 
-    client = open_tedapi(
-        host or "cloud", din, str(key_path), args.timeout,
-        via=args.via, fleet_base=fleet_base, token=token, site_id=args.site,
-    )
+    def make_client() -> Any:
+        return open_tedapi(
+            host or "cloud", din, str(key_path), args.timeout,
+            via=args.via, fleet_base=fleet_base, token=token, site_id=args.site,
+        )
+
+    client = make_client()
 
     loop = asyncio.get_event_loop()
     cloud_cache: dict[str, Any] = {"at": 0.0, "data": {}}
@@ -1941,7 +1956,16 @@ async def exporter_command(args: argparse.Namespace) -> int:
         return cloud_cache["data"]
 
     async def metrics_handler(_request: web.Request) -> web.Response:
+        nonlocal client
         vitals = await loop.run_in_executor(None, lambda: client.get_pw3_vitals(force=True))
+        if not vitals:
+            # After a LAN outage pypowerwall's reconnect path wipes the
+            # pre-seeded DIN and retries a password login this setup can never
+            # pass, wedging the client until the process restarts. A fresh
+            # client (construction does no network I/O) re-seeds the DIN so
+            # each scrape attempts a signed query and the exporter recovers on
+            # the first scrape after the gateway is reachable again.
+            client = make_client()
         cloud = await cloud_data()
         body = render_prometheus(vitals, cloud, up=bool(vitals))
         return web.Response(text=body, content_type="text/plain", charset="utf-8")
