@@ -242,6 +242,18 @@ class PrometheusRenderTests(unittest.TestCase):
         # Every metric family must carry a TYPE line.
         self.assertIn("# TYPE energyscraper_pv_string_power_watts gauge", out)
 
+    def test_render_wall_connector_and_powershare(self) -> None:
+        cloud = {"solar_power": 0, "load_power": 500, "wall_connectors": [
+            {"wall_connector_power": -11500, "wall_connector_state": 1, "powershare_session_state": 3}]}
+        out = render_prometheus(self._vitals(), cloud, up=True)
+        # Negative power is the vehicle feeding the house.
+        self.assertIn("energyscraper_wall_connector_power_watts -11500", out)
+        self.assertIn("energyscraper_powershare_session_state 3", out)
+
+    def test_render_skips_wall_connector_when_absent(self) -> None:
+        out = render_prometheus(self._vitals(), {"wall_connectors": []}, up=True)
+        self.assertNotIn("wall_connector_power_watts", out)
+
     def test_render_down_when_no_vitals(self) -> None:
         out = render_prometheus(None, {}, up=False)
         self.assertIn("energyscraper_up 0.0", out)

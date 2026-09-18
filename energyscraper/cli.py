@@ -1909,6 +1909,25 @@ def render_prometheus(
     if isinstance(pct, (int, float)):
         metric("powerwall_charge_percent", "Powerwall state of charge.", [("", pct)])
 
+    # Only present once the Wall Connector is a device on the energy site.
+    connectors = [c for c in (cloud.get("wall_connectors") or []) if isinstance(c, dict)]
+    if connectors:
+        powers = [c.get("wall_connector_power") for c in connectors]
+        powers = [p for p in powers if isinstance(p, (int, float))]
+        if powers:
+            metric(
+                "wall_connector_power_watts",
+                "Wall Connector power, summed. Negative is Powershare V2H (vehicle feeding the house).",
+                [("", sum(powers))],
+            )
+        for key, help_text in (
+            ("wall_connector_state", "Wall Connector state enum (4 idle, 1 charging)."),
+            ("powershare_session_state", "Powershare session state enum (1 idle)."),
+        ):
+            val = connectors[0].get(key)
+            if isinstance(val, (int, float)):
+                metric(key, help_text, [("", val)])
+
     return "\n".join(lines) + "\n"
 
 
