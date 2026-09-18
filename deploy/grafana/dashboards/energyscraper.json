@@ -97,7 +97,8 @@
       },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
-        { "refId": "A", "expr": "energyscraper_site_power_watts", "legendFormat": "{{flow}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
+        { "refId": "A", "expr": "energyscraper_site_power_watts", "legendFormat": "{{flow}}", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "B", "expr": "energyscraper_wall_connector_power_watts", "legendFormat": "vehicle (wall connector)", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
       ]
     },
     {
