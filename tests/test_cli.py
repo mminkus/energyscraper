@@ -273,6 +273,15 @@ class PrometheusRenderTests(unittest.TestCase):
         self.assertIn("energyscraper_battery_nameplate_power_watts 23040", out)
         self.assertIn("energyscraper_backup_reserve_percent 15", out)
 
+    def test_render_raw_pack_energy(self) -> None:
+        status = {"control": {"systemStatus": {"nominalEnergyRemainingWh": 4400,
+                                               "nominalFullPackEnergyWh": 28750},
+                              "islanding": {"contactorClosed": False}}}
+        out = render_prometheus(None, {}, up=False, status=status)
+        self.assertIn("energyscraper_pack_energy_remaining_watthours 4400", out)
+        self.assertIn("energyscraper_pack_energy_full_watthours 28750", out)
+        self.assertIn("energyscraper_island_contactor_closed 0.0", out)
+
     def test_render_island_status(self) -> None:
         out = render_prometheus(self._vitals(), {"island_status": "off_grid"}, up=True)
         self.assertIn('energyscraper_island_status{status="off_grid"} 1.0', out)

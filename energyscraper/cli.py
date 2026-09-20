@@ -1854,6 +1854,7 @@ def render_prometheus(
     cloud: dict[str, Any],
     up: bool,
     site: dict[str, Any] | None = None,
+    status: dict[str, Any] | None = None,
 ) -> str:
     """Render vitals + cached cloud data as Prometheus text exposition."""
     lines: list[str] = []
@@ -1981,6 +1982,24 @@ def render_prometheus(
             metric("export_rate_dollars_per_kwh", "Export (sell) price for the current local hour.",
                    [("", rate)])
 
+    # Raw pack state from TEDAPI. percentage_charged is the app's usable-window
+    # figure with the ~1 kWh emergency buffer already subtracted; these are not
+    # scaled, and the gateway's own thresholds work off them.
+    control = (status or {}).get("control") or {}
+    system = control.get("systemStatus") or {}
+    for key, name, help_text in (
+        ("nominalEnergyRemainingWh", "pack_energy_remaining_watthours", "Raw pack energy remaining."),
+        ("nominalFullPackEnergyWh", "pack_energy_full_watthours", "Raw full pack energy."),
+    ):
+        val = system.get(key)
+        if isinstance(val, (int, float)):
+            metric(name, help_text, [("", val)])
+
+    islanding = control.get("islanding") or {}
+    closed = islanding.get("contactorClosed")
+    if isinstance(closed, bool):
+        metric("island_contactor_closed", "1 when the grid contactor is closed.", [("", float(closed))])
+
     return "\n".join(lines) + "\n"
 
 
@@ -2055,8 +2074,14 @@ async def exporter_command(args: argparse.Namespace) -> int:
             # each scrape attempts a signed query and the exporter recovers on
             # the first scrape after the gateway is reachable again.
             client = make_client()
+        try:
+            status = await loop.run_in_executor(None, lambda: client.get_status(force=True))
+        except (Exception, BaseException) as exc:  # noqa: B036 - library raises BaseException
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
+            status = None
         cloud = await cloud_data()
-        body = render_prometheus(vitals, cloud, up=bool(vitals), site=await site_data())
+        body = render_prometheus(vitals, cloud, up=bool(vitals), site=await site_data(), status=status)
         return web.Response(text=body, content_type="text/plain", charset="utf-8")
 
     async def root_handler(_request: web.Request) -> web.Response:
