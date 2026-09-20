@@ -250,6 +250,10 @@ class PrometheusRenderTests(unittest.TestCase):
         self.assertIn("energyscraper_wall_connector_power_watts -11500", out)
         self.assertIn("energyscraper_powershare_session_state 3", out)
 
+    def test_render_island_status(self) -> None:
+        out = render_prometheus(self._vitals(), {"island_status": "off_grid"}, up=True)
+        self.assertIn('energyscraper_island_status{status="off_grid"} 1.0', out)
+
     def test_render_skips_wall_connector_when_absent(self) -> None:
         out = render_prometheus(self._vitals(), {"wall_connectors": []}, up=True)
         self.assertNotIn("wall_connector_power_watts", out)

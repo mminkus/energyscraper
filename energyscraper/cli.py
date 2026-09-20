@@ -1909,6 +1909,12 @@ def render_prometheus(
     if isinstance(pct, (int, float)):
         metric("powerwall_charge_percent", "Powerwall state of charge.", [("", pct)])
 
+    # String enum, so emit the current value as a labelled 1 (state-timeline friendly).
+    island = cloud.get("island_status")
+    if isinstance(island, str) and island:
+        metric("island_status", "Current island status (on_grid, off_grid, transition_*).",
+               [(f'status="{island}"', 1.0)])
+
     # Only present once the Wall Connector is a device on the energy site.
     connectors = [c for c in (cloud.get("wall_connectors") or []) if isinstance(c, dict)]
     if connectors:
