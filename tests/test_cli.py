@@ -6,7 +6,10 @@ from contextlib import redirect_stdout
 
 from tesla_fleet_api.const import EnergyDeviceIdentifierType
 
+from datetime import datetime
+
 from energyscraper.cli import (
+    sell_rate_now,
     _find_first_key,
     _fmt_num,
     _int_to_ipv4,
@@ -249,6 +252,26 @@ class PrometheusRenderTests(unittest.TestCase):
         # Negative power is the vehicle feeding the house.
         self.assertIn("energyscraper_wall_connector_power_watts -11500", out)
         self.assertIn("energyscraper_powershare_session_state 3", out)
+
+    def test_sell_rate_lookup(self) -> None:
+        site = {"tariff_content_v2": {"sell_tariff": {"energy_charges": {
+            "September": {"rates": {"hour_19_weekend": 0.699, "hour_19_weekday": 0.6}}}}}}
+        sat = datetime.fromisoformat("2026-09-19T19:22:35-07:00")
+        fri = datetime.fromisoformat("2026-09-18T19:22:35-07:00")
+        self.assertAlmostEqual(sell_rate_now(site, sat), 0.699)
+        self.assertAlmostEqual(sell_rate_now(site, fri), 0.6)
+        self.assertIsNone(sell_rate_now({}, sat))
+
+    def test_render_site_info_metrics(self) -> None:
+        site = {"battery_count": 2, "backup_reserve_percent": 15,
+                "components": {"gateways": [{"nameplate_energy_watts": 27000,
+                                             "nameplate_power_watts": 23040}]}}
+        cloud = {"timestamp": "2026-09-19T19:22:35-07:00"}
+        out = render_prometheus(None, cloud, up=False, site=site)
+        self.assertIn("energyscraper_battery_count 2", out)
+        self.assertIn("energyscraper_battery_nameplate_energy_watthours 27000", out)
+        self.assertIn("energyscraper_battery_nameplate_power_watts 23040", out)
+        self.assertIn("energyscraper_backup_reserve_percent 15", out)
 
     def test_render_island_status(self) -> None:
         out = render_prometheus(self._vitals(), {"island_status": "off_grid"}, up=True)

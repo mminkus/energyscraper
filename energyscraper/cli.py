@@ -9,6 +9,7 @@ import os
 import secrets
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlencode, urlparse
@@ -1834,10 +1835,25 @@ async def strings_command(args: argparse.Namespace) -> int:
             return 0
 
 
+def sell_rate_now(site: dict[str, Any], when: datetime) -> float | None:
+    """Export price per kWh from the site tariff at `when`, or None.
+
+    The sell tariff has one season per month keyed by English month name, and
+    rates keyed hour_<0-23>_<weekday|weekend>.
+    """
+    tariff = site.get("tariff_content_v2") or site.get("tariff_content") or {}
+    charges = ((tariff.get("sell_tariff") or {}).get("energy_charges") or {})
+    rates = (charges.get(when.strftime("%B")) or {}).get("rates") or {}
+    day = "weekend" if when.weekday() >= 5 else "weekday"
+    val = rates.get(f"hour_{when.hour}_{day}")
+    return float(val) if isinstance(val, (int, float)) else None
+
+
 def render_prometheus(
     vitals: dict[str, Any] | None,
     cloud: dict[str, Any],
     up: bool,
+    site: dict[str, Any] | None = None,
 ) -> str:
     """Render vitals + cached cloud data as Prometheus text exposition."""
     lines: list[str] = []
@@ -1934,6 +1950,37 @@ def render_prometheus(
             if isinstance(val, (int, float)):
                 metric(key, help_text, [("", val)])
 
+    # Near-static config from site_info. Cheap to graph, and the only way to see
+    # a hardware change (a Powerwall dropping out) after the fact.
+    if site:
+        gateway = ((site.get("components") or {}).get("gateways") or [{}])[0]
+        for key, name, help_text in (
+            ("battery_count", "battery_count", "Powerwalls Tesla reports for the site."),
+            ("backup_reserve_percent", "backup_reserve_percent", "Configured backup reserve."),
+        ):
+            val = site.get(key)
+            if isinstance(val, (int, float)):
+                metric(name, help_text, [("", val)])
+        # Tesla names it *_watts but the value is energy, so report it as watt-hours.
+        energy = gateway.get("nameplate_energy_watts")
+        if isinstance(energy, (int, float)):
+            metric("battery_nameplate_energy_watthours", "Nameplate pack energy.", [("", energy)])
+        power = gateway.get("nameplate_power_watts") or site.get("nameplate_power")
+        if isinstance(power, (int, float)):
+            metric("battery_nameplate_power_watts", "Nameplate inverter power.", [("", power)])
+
+        stamp = cloud.get("timestamp")
+        when = None
+        if isinstance(stamp, str):
+            try:
+                when = datetime.fromisoformat(stamp)
+            except ValueError:
+                when = None
+        rate = sell_rate_now(site, when) if when else None
+        if rate is not None:
+            metric("export_rate_dollars_per_kwh", "Export (sell) price for the current local hour.",
+                   [("", rate)])
+
     return "\n".join(lines) + "\n"
 
 
@@ -1980,6 +2027,23 @@ async def exporter_command(args: argparse.Namespace) -> int:
             print(f"[exporter] live_status failed: {exc.message}", file=sys.stderr)
         return cloud_cache["data"]
 
+    site_cache: dict[str, Any] = {"at": 0.0, "data": {}}
+
+    async def site_data() -> dict[str, Any]:
+        # Nameplate, battery count and tariff barely ever change, so poll hourly.
+        now = loop.time()
+        if site_cache["data"] and now - site_cache["at"] < 3600:
+            return site_cache["data"]
+        try:
+            refreshed, _, _ = await get_api(session, args)
+            info = unwrap_response(await refreshed.energySites.create(args.site).site_info())
+            if isinstance(info, dict):
+                site_cache["data"] = info
+                site_cache["at"] = now
+        except TeslaFleetError as exc:
+            print(f"[exporter] site_info failed: {exc.message}", file=sys.stderr)
+        return site_cache["data"]
+
     async def metrics_handler(_request: web.Request) -> web.Response:
         nonlocal client
         vitals = await loop.run_in_executor(None, lambda: client.get_pw3_vitals(force=True))
@@ -1992,7 +2056,7 @@ async def exporter_command(args: argparse.Namespace) -> int:
             # the first scrape after the gateway is reachable again.
             client = make_client()
         cloud = await cloud_data()
-        body = render_prometheus(vitals, cloud, up=bool(vitals))
+        body = render_prometheus(vitals, cloud, up=bool(vitals), site=await site_data())
         return web.Response(text=body, content_type="text/plain", charset="utf-8")
 
     async def root_handler(_request: web.Request) -> web.Response:
