@@ -282,6 +282,17 @@ class PrometheusRenderTests(unittest.TestCase):
         self.assertIn("energyscraper_pack_energy_full_watthours 28750", out)
         self.assertIn("energyscraper_island_contactor_closed 0.0", out)
 
+    def test_ac_coupled_skipped_during_powershare(self) -> None:
+        # The gateway folds the vehicle's output into the solar meter, so the
+        # meter-minus-strings derivation would report a phantom array.
+        cloud = {"solar_power": 8582, "wall_connectors": [
+            {"wall_connector_power": -9027.24, "powershare_session_state": 2}]}
+        out = render_prometheus(self._vitals(), cloud, up=True)
+        self.assertIn("energyscraper_solar_total_watts 8582", out)
+        self.assertNotIn("solar_ac_coupled_watts", out)
+        self.assertIn("energyscraper_wall_connector_power_watts -9027.24", out)
+        self.assertIn("energyscraper_powershare_session_state 2", out)
+
     def test_render_island_status(self) -> None:
         out = render_prometheus(self._vitals(), {"island_status": "off_grid"}, up=True)
         self.assertIn('energyscraper_island_status{status="off_grid"} 1.0', out)

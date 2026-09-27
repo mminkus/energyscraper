@@ -1905,10 +1905,22 @@ def render_prometheus(
     if power:
         metric("solar_dc_watts", "Sum of the Powerwall DC strings.", [("", string_total)])
 
+    # Needed before the solar block: during Powershare the gateway folds the
+    # vehicle's output into the solar meter (observed 8.6 kW of "solar" at
+    # 22:00, in the dark), which breaks the AC-coupled derivation below.
+    connectors = [c for c in (cloud.get("wall_connectors") or []) if isinstance(c, dict)]
+    wc_powers = [c.get("wall_connector_power") for c in connectors]
+    wc_powers = [p for p in wc_powers if isinstance(p, (int, float))]
+    wc_total = sum(wc_powers) if wc_powers else 0.0
+    powershare = wc_total < 0  # negative is the vehicle feeding the house
+
     solar_total = cloud.get("solar_power")
     if isinstance(solar_total, (int, float)):
         metric("solar_total_watts", "Metered solar total (all sources).", [("", solar_total)])
-        if power:
+        # meter total minus DC strings only means AC-coupled solar while the
+        # meter is measuring solar alone, so skip it during a Powershare session
+        # rather than report the vehicle as a phantom array.
+        if power and not powershare:
             metric(
                 "solar_ac_coupled_watts",
                 "AC-coupled solar (metered total minus DC strings).",
@@ -1933,19 +1945,16 @@ def render_prometheus(
                [(f'status="{island}"', 1.0)])
 
     # Only present once the Wall Connector is a device on the energy site.
-    connectors = [c for c in (cloud.get("wall_connectors") or []) if isinstance(c, dict)]
     if connectors:
-        powers = [c.get("wall_connector_power") for c in connectors]
-        powers = [p for p in powers if isinstance(p, (int, float))]
-        if powers:
+        if wc_powers:
             metric(
                 "wall_connector_power_watts",
                 "Wall Connector power, summed. Negative is Powershare V2H (vehicle feeding the house).",
-                [("", sum(powers))],
+                [("", wc_total)],
             )
         for key, help_text in (
             ("wall_connector_state", "Wall Connector state enum (4 idle, 1 charging)."),
-            ("powershare_session_state", "Powershare session state enum (1 idle)."),
+            ("powershare_session_state", "Powershare session state enum (1 idle, 2 active)."),
         ):
             val = connectors[0].get(key)
             if isinstance(val, (int, float)):
