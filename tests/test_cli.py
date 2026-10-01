@@ -293,6 +293,26 @@ class PrometheusRenderTests(unittest.TestCase):
         self.assertIn("energyscraper_wall_connector_power_watts -9027.24", out)
         self.assertIn("energyscraper_powershare_session_state 2", out)
 
+    def test_render_wall_connector_local(self) -> None:
+        wc = {
+            "vitals": {"session_energy_wh": 0.0, "grid_v": 240.6, "grid_hz": 59.956,
+                       "vehicle_connected": True, "contactor_closed": False,
+                       "handle_temp_c": 22.8, "mcu_temp_c": 29.2, "pcba_temp_c": 25.5,
+                       "evse_not_ready_reasons": [1]},
+            "lifetime": {"energy_wh": 4745900, "charge_starts": 1367},
+            "version": {"firmware_version": "26.26.10+gabc", "part_number": "1457768-01-F",
+                        "serial_number": "B7S20224Y01614"},
+        }
+        out = render_prometheus(None, {}, up=False, wc=wc)
+        self.assertIn("energyscraper_wall_connector_lifetime_energy_watthours 4745900", out)
+        self.assertIn("energyscraper_wall_connector_vehicle_connected 1.0", out)
+        self.assertIn("energyscraper_wall_connector_contactor_closed 0.0", out)
+        self.assertIn('energyscraper_wall_connector_temperature_celsius{sensor="handle"} 22.8', out)
+        self.assertIn('energyscraper_wall_connector_not_ready_reason{reason="1"} 1.0', out)
+        self.assertIn('firmware="26.26.10+gabc"', out)
+        # The repo is public: never label with the connector serial.
+        self.assertNotIn("B7S20224Y01614", out)
+
     def test_render_island_status(self) -> None:
         out = render_prometheus(self._vitals(), {"island_status": "off_grid"}, up=True)
         self.assertIn('energyscraper_island_status{status="off_grid"} 1.0', out)

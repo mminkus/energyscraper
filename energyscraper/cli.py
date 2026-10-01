@@ -1835,6 +1835,22 @@ async def strings_command(args: argparse.Namespace) -> int:
             return 0
 
 
+async def wall_connector_data(session: Any, host: str, timeout: int = 3) -> dict[str, Any] | None:
+    """Read the Gen 3 Wall Connector's local HTTP API. No auth, LAN only."""
+    out: dict[str, Any] = {}
+    for path in ("vitals", "lifetime", "version"):
+        try:
+            async with session.get(
+                f"http://{host}/api/1/{path}",
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                out[path] = await resp.json(content_type=None)
+        except (Exception, BaseException) as exc:  # noqa: B036
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
+    return out or None
+
+
 def sell_rate_now(site: dict[str, Any], when: datetime) -> float | None:
     """Export price per kWh from the site tariff at `when`, or None.
 
@@ -1855,6 +1871,7 @@ def render_prometheus(
     up: bool,
     site: dict[str, Any] | None = None,
     status: dict[str, Any] | None = None,
+    wc: dict[str, Any] | None = None,
 ) -> str:
     """Render vitals + cached cloud data as Prometheus text exposition."""
     lines: list[str] = []
@@ -2009,6 +2026,55 @@ def render_prometheus(
     if isinstance(closed, bool):
         metric("island_contactor_closed", "1 when the grid contactor is closed.", [("", float(closed))])
 
+    # Wall Connector local API (unauthenticated, LAN). Richer than what the
+    # gateway reports: a lifetime energy counter, temperatures, firmware, and
+    # the connector's own not-ready reasons.
+    if wc:
+        vitals = wc.get("vitals") or {}
+        life = wc.get("lifetime") or {}
+        ver = wc.get("version") or {}
+        for key, name, help_text in (
+            ("session_energy_wh", "wall_connector_session_energy_watthours", "Energy this session."),
+            ("grid_v", "wall_connector_grid_volts", "Grid voltage at the connector."),
+            ("grid_hz", "wall_connector_grid_hertz", "Grid frequency at the connector."),
+            ("vehicle_current_a", "wall_connector_vehicle_current_amps", "Current drawn by the vehicle."),
+            ("evse_state", "wall_connector_evse_state", "Connector EVSE state enum."),
+            ("uptime_s", "wall_connector_uptime_seconds", "Connector uptime."),
+        ):
+            val = vitals.get(key)
+            if isinstance(val, (int, float)):
+                metric(name, help_text, [("", val)])
+        for key, name, help_text in (
+            ("vehicle_connected", "wall_connector_vehicle_connected", "1 when a vehicle is plugged in."),
+            ("contactor_closed", "wall_connector_contactor_closed", "1 when the contactor is closed."),
+        ):
+            val = vitals.get(key)
+            if isinstance(val, bool):
+                metric(name, help_text, [("", float(val))])
+        temps = [(f'sensor="{s_}"', vitals[k]) for k, s_ in
+                 (("handle_temp_c", "handle"), ("mcu_temp_c", "mcu"), ("pcba_temp_c", "pcba"))
+                 if isinstance(vitals.get(k), (int, float))]
+        metric("wall_connector_temperature_celsius", "Connector temperatures.", temps)
+        reasons = vitals.get("evse_not_ready_reasons")
+        if isinstance(reasons, list):
+            metric("wall_connector_not_ready_reason", "Connector's own reasons for not being ready.",
+                   [(f'reason="{r}"', 1.0) for r in reasons])
+        # Cumulative since install. Monotonic, so increase() works on it.
+        for key, name, help_text in (
+            ("energy_wh", "wall_connector_lifetime_energy_watthours", "Lifetime energy delivered."),
+            ("charge_starts", "wall_connector_lifetime_charge_starts", "Lifetime charge sessions."),
+            ("charging_time_s", "wall_connector_lifetime_charging_seconds", "Lifetime charging time."),
+            ("contactor_cycles", "wall_connector_lifetime_contactor_cycles", "Lifetime contactor cycles."),
+        ):
+            val = life.get(key)
+            if isinstance(val, (int, float)):
+                metric(name, help_text, [("", val)])
+        fw, part = ver.get("firmware_version"), ver.get("part_number")
+        if fw:
+            # serial is deliberately not a label; this repo is public.
+            metric("wall_connector_info", "Connector firmware and part number.",
+                   [(f'firmware="{fw}",part_number="{part or ""}"', 1.0)])
+
     return "\n".join(lines) + "\n"
 
 
@@ -2090,7 +2156,9 @@ async def exporter_command(args: argparse.Namespace) -> int:
                 raise
             status = None
         cloud = await cloud_data()
-        body = render_prometheus(vitals, cloud, up=bool(vitals), site=await site_data(), status=status)
+        wc = await wall_connector_data(session, args.wall_connector_host) if args.wall_connector_host else None
+        body = render_prometheus(vitals, cloud, up=bool(vitals), site=await site_data(),
+                                 status=status, wc=wc)
         return web.Response(text=body, content_type="text/plain", charset="utf-8")
 
     async def root_handler(_request: web.Request) -> web.Response:
@@ -2412,6 +2480,7 @@ def build_parser() -> argparse.ArgumentParser:
     exporter_parser.add_argument("--via", choices=["local", "cloud"], default="local", help="Transport for the string read (local is the working path).")
     exporter_parser.add_argument("--bind", default="0.0.0.0", help="Address to bind the HTTP server (default 0.0.0.0).")
     exporter_parser.add_argument("--port", type=int, default=9835, help="Port for the /metrics endpoint (default 9835).")
+    exporter_parser.add_argument("--wall-connector-host", help="IP of a Gen 3 Wall Connector to read locally (unauthenticated LAN API).")
     exporter_parser.add_argument("--ttl", type=float, default=30.0, help="Seconds to cache the cloud live_status (solar meter/site power) between scrapes.")
     exporter_parser.add_argument("--timeout", type=int, default=15, help="Per-request timeout in seconds.")
     exporter_parser.set_defaults(func=exporter_command)
