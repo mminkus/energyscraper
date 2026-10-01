@@ -1929,7 +1929,9 @@ def render_prometheus(
     wc_powers = [c.get("wall_connector_power") for c in connectors]
     wc_powers = [p for p in wc_powers if isinstance(p, (int, float))]
     wc_total = sum(wc_powers) if wc_powers else 0.0
-    powershare = wc_total < 0  # negative is the vehicle feeding the house
+    # Vehicle-to-home runs at kilowatts (-9000 W observed); an idle connector
+    # reports noise around -0.01 W, so test the magnitude, not just the sign.
+    powershare = wc_total < -100
 
     solar_total = cloud.get("solar_power")
     if isinstance(solar_total, (int, float)):

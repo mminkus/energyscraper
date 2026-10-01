@@ -313,6 +313,12 @@ class PrometheusRenderTests(unittest.TestCase):
         # The repo is public: never label with the connector serial.
         self.assertNotIn("B7S20224Y01614", out)
 
+    def test_ac_coupled_survives_idle_connector_noise(self) -> None:
+        # An idle connector reports noise around -0.01 W; that is not Powershare.
+        cloud = {"solar_power": 4000, "wall_connectors": [{"wall_connector_power": -0.02}]}
+        out = render_prometheus(self._vitals(), cloud, up=True)
+        self.assertIn("energyscraper_solar_ac_coupled_watts", out)
+
     def test_render_island_status(self) -> None:
         out = render_prometheus(self._vitals(), {"island_status": "off_grid"}, up=True)
         self.assertIn('energyscraper_island_status{status="off_grid"} 1.0', out)
