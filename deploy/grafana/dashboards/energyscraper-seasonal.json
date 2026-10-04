@@ -31,11 +31,11 @@
       },
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
-        { "refId": "A", "expr": "max(avg_over_time(energyscraper_pv_string_power_watts{string=\"1\"}[24h])) * 24 / 1000", "legendFormat": "North (String 1)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
-        { "refId": "B", "expr": "max(avg_over_time(energyscraper_pv_string_power_watts{string=\"2\"}[24h])) * 24 / 1000", "legendFormat": "West (String 2)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
-        { "refId": "C", "expr": "max(avg_over_time(energyscraper_pv_string_power_watts{string=\"3\"}[24h])) * 24 / 1000", "legendFormat": "East (String 3)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
-        { "refId": "D", "expr": "clamp_min(max(avg_over_time(energyscraper_solar_ac_coupled_watts[24h])), 0) * 24 / 1000", "legendFormat": "South (SMA)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
-        { "refId": "E", "expr": "max(avg_over_time(energyscraper_solar_total_watts[24h])) * 24 / 1000", "legendFormat": "Total (meter)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
+        { "refId": "A", "expr": "max(avg_over_time(energyscraper_pv_string_power_watts{string=\"1\"}[24h])) * 24 / 1000 and max(count_over_time(energyscraper_pv_string_power_watts{string=\"1\"}[24h])) > 1200", "legendFormat": "North (String 1)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "B", "expr": "max(avg_over_time(energyscraper_pv_string_power_watts{string=\"2\"}[24h])) * 24 / 1000 and max(count_over_time(energyscraper_pv_string_power_watts{string=\"2\"}[24h])) > 1200", "legendFormat": "West (String 2)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "C", "expr": "max(avg_over_time(energyscraper_pv_string_power_watts{string=\"3\"}[24h])) * 24 / 1000 and max(count_over_time(energyscraper_pv_string_power_watts{string=\"3\"}[24h])) > 1200", "legendFormat": "East (String 3)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "D", "expr": "clamp_min(max(avg_over_time(energyscraper_solar_ac_coupled_watts[24h])), 0) * 24 / 1000 and max(count_over_time(energyscraper_solar_ac_coupled_watts[24h])) > 1200", "legendFormat": "South (SMA)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "E", "expr": "max(avg_over_time(energyscraper_solar_total_watts[24h])) * 24 / 1000 and max(count_over_time(energyscraper_solar_total_watts[24h])) > 1200", "legendFormat": "Total (meter)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
       ]
     },
     {
@@ -59,10 +59,10 @@
       },
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
-        { "refId": "A", "expr": "max(avg_over_time(energyscraper_pv_string_power_watts{string=\"1\"}[24h])) * 24 / 1000", "legendFormat": "North (String 1)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
-        { "refId": "B", "expr": "max(avg_over_time(energyscraper_pv_string_power_watts{string=\"2\"}[24h])) * 24 / 1000", "legendFormat": "West (String 2)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
-        { "refId": "C", "expr": "max(avg_over_time(energyscraper_pv_string_power_watts{string=\"3\"}[24h])) * 24 / 1000", "legendFormat": "East (String 3)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
-        { "refId": "D", "expr": "clamp_min(max(avg_over_time(energyscraper_solar_ac_coupled_watts[24h])), 0) * 24 / 1000", "legendFormat": "South (SMA)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
+        { "refId": "A", "expr": "max(avg_over_time(energyscraper_pv_string_power_watts{string=\"1\"}[24h])) * 24 / 1000 and max(count_over_time(energyscraper_pv_string_power_watts{string=\"1\"}[24h])) > 1200", "legendFormat": "North (String 1)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "B", "expr": "max(avg_over_time(energyscraper_pv_string_power_watts{string=\"2\"}[24h])) * 24 / 1000 and max(count_over_time(energyscraper_pv_string_power_watts{string=\"2\"}[24h])) > 1200", "legendFormat": "West (String 2)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "C", "expr": "max(avg_over_time(energyscraper_pv_string_power_watts{string=\"3\"}[24h])) * 24 / 1000 and max(count_over_time(energyscraper_pv_string_power_watts{string=\"3\"}[24h])) > 1200", "legendFormat": "East (String 3)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } },
+        { "refId": "D", "expr": "clamp_min(max(avg_over_time(energyscraper_solar_ac_coupled_watts[24h])), 0) * 24 / 1000 and max(count_over_time(energyscraper_solar_ac_coupled_watts[24h])) > 1200", "legendFormat": "South (SMA)", "interval": "1d", "datasource": { "type": "prometheus", "uid": "energyscraper-prom" } }
       ]
     }
   ]
